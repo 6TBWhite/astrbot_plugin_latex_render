@@ -1,0 +1,94 @@
+{
+    "default_template": {
+        "type": "string",
+        "description": "默认模板",
+        "default": "",
+        "hint": "未显式指定模板时优先使用的模板文件名，不填时自动使用第一个可用模板"
+    },
+    "render_width": {
+        "type": "int",
+        "description": "渲染宽度（像素）",
+        "default": 600,
+        "hint": "建议范围 400-800"
+    },
+    "render_scale": {
+        "type": "int",
+        "description": "渲染缩放倍数",
+        "default": 2,
+        "hint": "倍数越高越清晰，建议 2-3"
+    },
+    "enable_markdown": {
+        "type": "bool",
+        "description": "启用 Markdown 渲染",
+        "default": true,
+        "hint": "支持标题、列表、引用、代码块等 Markdown 语法"
+    },
+    "enable_math": {
+        "type": "bool",
+        "description": "启用 LaTeX 数学公式渲染",
+        "default": true,
+        "hint": "支持 $...$、$$...$$、\\(...\\)、\\[...\\] 以及部分 begin/end 环境"
+    },
+
+    "classic_body_padding": {
+        "type": "int",
+        "description": "classic 模板外圈绿色边距",
+        "default": 18,
+        "hint": "像素值，建议 12-24"
+    },
+    "classic_page_padding_y": {
+        "type": "int",
+        "description": "classic 模板画布上下内边距",
+        "default": 32,
+        "hint": "像素值"
+    },
+    "classic_page_padding_x": {
+        "type": "int",
+        "description": "classic 模板画布左右内边距",
+        "default": 28,
+        "hint": "像素值"
+    },
+    "classic_font_size": {
+        "type": "int",
+        "description": "classic 模板正文字号",
+        "default": 22,
+        "hint": "像素值，建议 16-24"
+    },
+    "classic_line_height": {
+        "type": "float",
+        "description": "classic 模板行高",
+        "default": 1.8,
+        "hint": "建议 1.5-2.0"
+    },
+    "classic_h1_size": {
+        "type": "int",
+        "description": "classic 模板 h1 字号",
+        "default": 31,
+        "hint": "像素值"
+    },
+    "classic_h2_size": {
+        "type": "int",
+        "description": "classic 模板 h2 字号",
+        "default": 26,
+        "hint": "像素值"
+    },
+    "classic_h3_size": {
+        "type": "int",
+        "description": "classic 模板 h3 字号",
+        "default": 23,
+        "hint": "像素值"
+    },
+    "inject_template_prompts": {
+        "type": "bool",
+        "description": "注入模板专属指令",
+        "default": false,
+        "hint": "在 LLM 请求时注入当前模板（classic / novel）的格式说明。默认关闭，避免干扰对话上下文"
+    },
+    "enable_hidden_ctx_buffer": {
+        "label": "图片原始文本独立缓存区",
+        "description": "⚠️实验性功能：启用图片原始文本独立缓冲区",
+        "hint": "将渲染成图片的原始文本存入独立缓冲区作为伪造 assistant 消息注入上下文，仅推荐超出上下文长度后仍有核对图片内容需要的用户使用。",
+        "type": "bool",
+        "default": false
+    }
+}

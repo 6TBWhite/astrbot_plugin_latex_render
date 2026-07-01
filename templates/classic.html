@@ -1,0 +1,233 @@
+<!-- BUILTIN_PROMPT
+这是 classic 模板，适合用于数学公式推导、知识点讲解、表格对比、代码展示等结构化内容。
+写公式时使用标准 LaTeX 语法（$...$ 行内，$$...$$ 块级）。
+写表格时使用 Markdown 表格语法。
+此模板不使用语义标签（q/inner/act/scene/aside），请直接用纯 Markdown。
+-->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: fit-content;
+            min-width: 100%;
+            max-width: 680px;
+        }
+
+        body {
+            font-family: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #2d5a3d;
+            padding: var(--classic-body-padding, 18px);
+        }
+
+        .page {
+            background: #f0ebe0;
+            background-image:
+                radial-gradient(circle at 20% 80%, rgba(45, 90, 61, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(201, 184, 150, 0.06) 0%, transparent 50%);
+            width: 100%;
+            padding: var(--classic-page-padding-y, 32px) var(--classic-page-padding-x, 28px);
+            border-radius: 8px;
+            box-shadow:
+                0 2px 8px rgba(0,0,0,0.15),
+                0 8px 32px rgba(0,0,0,0.35);
+            position: relative;
+            min-width: 320px;
+        }
+
+        .page::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(to right, #2d5a3d, #4a8b6a, #2d5a3d);
+            border-radius: 8px 8px 0 0;
+        }
+
+        .content {
+            font-size: var(--classic-font-size, 22px);
+            line-height: var(--classic-line-height, 1.8);
+            color: #2a2a2a;
+            text-align: justify;
+            width: 100%;
+            max-width: 100%;
+            overflow: hidden;
+        }
+
+        /* ===== 全局防溢出 ===== */
+        .content * {
+            max-width: 100% !important;
+            word-wrap: break-word !important;
+            overflow-wrap: anywhere !important;
+            box-sizing: border-box !important;
+        }
+        .content q, .content inner, .content act, .content code {
+            word-break: break-word !important;
+        }
+
+        /* 段落 */
+        .content p {
+            margin-bottom: 0.6em;
+        }
+        .content p:last-child { margin-bottom: 0; }
+
+        /* 标题 */
+        .content h1, .content h2, .content h3 {
+            color: #1a4a2a;
+            font-weight: 700;
+            margin-top: 1.4em;
+            margin-bottom: 0.8em;
+            line-height: 1.4;
+        }
+        .content h1 {
+            font-size: var(--classic-h1-size, 31px);
+            margin-top: 0;
+            padding-bottom: 0.3em;
+            border-bottom: 2px solid #4a8b6a;
+        }
+        .content h2 {
+            font-size: var(--classic-h2-size, 26px);
+            padding-left: 10px;
+            border-left: 4px solid #4a8b6a;
+        }
+        .content h3 {
+            font-size: var(--classic-h3-size, 23px);
+            color: #2d5a3d;
+        }
+
+        /* 引用块 */
+        .content blockquote {
+            margin: 1em 0;
+            padding: 10px 16px;
+            border-left: 3px solid #4a8b6a;
+            background: rgba(74, 139, 106, 0.06);
+            color: #555;
+            font-style: italic;
+            border-radius: 0 4px 4px 0;
+        }
+
+        /* 列表 */
+        .content ul, .content ol {
+            margin-left: 1.5em;
+            margin-bottom: 0.8em;
+            padding-left: 0.5em;
+        }
+        .content li {
+            margin-bottom: 0.3em;
+        }
+        .content ul > li::marker { color: #4a8b6a; }
+        .content ol > li::marker { color: #2d5a3d; font-weight: 600; }
+
+        /* 分割线 */
+        .content hr {
+            border: 0;
+            height: 1px;
+            background-image: linear-gradient(to right, rgba(0,0,0,0), rgba(45,90,61,0.3), rgba(0,0,0,0));
+            margin: 1.5em 0;
+        }
+
+        /* ===== 代码块 ===== */
+        .content pre {
+            background: #1e3a2b;
+            color: #e8e0d0;
+            padding: 14px 18px;
+            border-radius: 6px;
+            margin: 1em 0;
+            overflow-x: auto;
+            max-width: 100%;
+            white-space: pre-wrap;
+            word-break: break-all;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+        .content code {
+            background: rgba(45, 90, 61, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: "Consolas", "Monaco", "Courier New", monospace;
+            font-size: 0.88em;
+            color: #1a4a2a;
+        }
+        .content pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+        }
+
+        /* ===== 表格 ===== */
+        .content table {
+            width: 100%;
+            max-width: 100%;
+            border-collapse: collapse;
+            margin: 1em 0;
+            font-size: 0.93em;
+            table-layout: fixed;
+        }
+        .content th, .content td {
+            border: 1px solid #c9d4c0;
+            padding: 8px 12px;
+            text-align: left;
+            word-break: break-all;
+        }
+        .content th {
+            background: rgba(45, 90, 61, 0.12);
+            font-weight: 600;
+            color: #1a4a2a;
+        }
+        .content tr:nth-child(even) td {
+            background: rgba(45, 90, 61, 0.03);
+        }
+
+        /* ===== details 折叠块 ===== */
+        .content details {
+            margin: 1em 0;
+            padding: 0;
+            border: 1px solid #c9d4c0;
+            border-radius: 6px;
+            background: rgba(45, 90, 61, 0.03);
+            width: 100%;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .content summary {
+            padding: 10px 16px;
+            cursor: pointer;
+            font-weight: 600;
+            background: rgba(45, 90, 61, 0.08);
+            user-select: none;
+            display: block;
+        }
+        .content details[open] summary {
+            border-bottom: 1px solid #c9d4c0;
+        }
+        .content details > *:not(summary) {
+            padding: 10px 16px;
+            max-width: 100%;
+            display: block;
+        }
+        .content details,
+        .content details * {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere !important;
+            word-break: break-all !important;
+        }
+
+        /* ===== 行内公式 / 块级公式 ===== */
+        .content .katex-display {
+            margin: 0.8em 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="content">{{content}}</div>
+    </div>
+</body>
+</html>
