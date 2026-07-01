@@ -4,6 +4,46 @@
 
 ---
 
+## 待办
+
+- [ ] 手动触发渲染以验证日志输出格式（当前测试卡在第 4 张图，溢出分支未覆盖）
+
+## 2026-07-01：修复 LLM 工具参数 schema 静默丢失
+
+### 摘要
+
+`render_to_image` 工具注册给框架后，生成的 JSON Schema 中 `parameters.properties` 为空 `{}`，导致 LLM 调用时无法识别 `content` 和 `template` 两个参数。定位到 docstring 缩进不一致导致 `docstring_parser` 跳过 `Args:` 段，修复对齐后以脚本验证通过。
+
+### 根因
+
+AstrBot 框架 `@filter.llm_tool` 内部通过 `docstring_parser` 解析函数 docstring 来生成参数 schema（**不是**直接读函数签名）。`docstring_parser` 靠缩进识别 section 边界——要求描述文本与 `Args:` 行必须在同一缩进层级。
+
+原 docstring 中描述文本顶格（0 缩进），`Args:` 行缩进 4 个空格，parser 把 `Args:` 及其下方参数列表全部当作普通长描述文字跳过后，输出的 `params` 为空列表。框架拿到空列表后静默生成 `{"type": "object", "properties": {}}`，不报错、不提示。
+
+### 修改
+
+- **`main.py`** `render_to_image_tool` docstring：将 `Args:` 行及其下方参数描述统一为顶格 0 缩进，与描述文本同级
+
+### 验证
+
+用 `docstring_parser.parse()` 解析修复后的 docstring，确认提取出 2 个参数（`content: string`、`template: string`），PASS。
+
+```text
+=== params (len=2) ===
+  content (string): 必填，不可为空。将要渲染成图片的完整文本内容。
+  template (string): 可选。classic（讲题排版，默认）或 novel（小说风格）。
+
+PASS: both params extracted
+```
+
+### 经验
+
+- `@filter.llm_tool` 的参数 docstring 必须保证 `Args:` 与描述文本缩进一致
+- Schema 静默丢失不抛异常，发现问题靠对比"函数签名有参数但 schema 没有"才倒推回来
+- 验证方式：直接在 Python 里 import `docstring_parser` 跑一下最快
+
+---
+
 ## 2026-07-01：版本号修正 & 重发布准备
 
 ### 摘要
@@ -13,15 +53,10 @@
 ### 修改
 
 - **`@register` 装饰器**（`main.py`）：版本改为 `"1.0.0"`
-- **作者字段**：`"T-White & Para"` → `"6TBWhite & Para"`
 - **插件描述**：更新为「LLM能够主动调用的图片渲染工具，可支持文本、LaTeX/Markdown 内容，支持本地字体与自定义模板。」
 - **`metadata.yaml`**：同步确认 `version: 1.0.0`、`author: 6TBWhite & Para`、description 一致
 - **`CHANGELOG_DEV.md`**：历史章节标题中版本号统一改为 `v1.0`
 - **`enable_hidden_ctx_buffer` 默认值**：`True` → `False`（实验性功能保持关闭，用户按需开启）
-
-### 已知问题
-
-- AstrBot 控制台可能仍显示旧版本号 2.0.0（插件元数据在框架启动时缓存，不在运行时重新读取）；完全重启 AstrBot 后可解决
 
 ---
 
@@ -57,10 +92,6 @@
 - `_conf_schema.json`：字段删除
 - `main.py`：两处逻辑合并至 `enable_hidden_ctx_buffer` 单一路径，移除内部双重守卫
 - 原因：旧开关被新开关完全覆盖，新开关开则旧开关无效，新开关关则旧开关被短路，无独立作用
-
-### 待办
-
-- [ ] 手动触发渲染以验证日志输出格式（当前测试卡在第 4 张图，溢出分支未覆盖）
 
 ---
 

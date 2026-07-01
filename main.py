@@ -988,10 +988,10 @@ body > * {{
 
 适用场景：讲解题目、展示数学公式/方程、制作表格、代码展示、结构化知识整理等。
 
-        Args:
-            content(string): 必填，不可为空。将要渲染成图片的完整文本内容，直接写 Markdown + LaTeX 公式。不要包裹 <render> 标签或代码块。
-            template(string): 可选。classic（讲题排版，默认）或 novel（小说风格）。不指定则使用用户默认模板。
-        """
+Args:
+    content (string): 必填，不可为空。将要渲染成图片的完整文本内容，直接写 Markdown + LaTeX 公式。不要包裹 <render> 标签或代码块。
+    template (string): 可选。classic（讲题排版，默认）或 novel（小说风格）。不指定则使用用户默认模板。
+    """
         if not content or not content.strip():
             yield "⚠️ 内容不能为空，请提供需要渲染的 Markdown 文本。"
             return
@@ -1014,7 +1014,7 @@ body > * {{
                 await event.send(event.chain_result(image))
             else:
                 await event.send(event.chain_result([image]))
-            yield "请将图片展示给用户，并补充必要的解释或总结。"
+            yield "图片已渲染并发送给用户。可对图片内容进行简要解说。"
         else:
             yield "渲染失败，请检查内容格式后重试。"
 
