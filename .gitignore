@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual env (optional)
+.venv/
+venv/
+env/
+
+# OS / IDE (optional)
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Git 提交脚本（不需要提交）
+git提交.py
+
+# 测试文件
+test_variable.md
+
+# 备份目录
+_workspace_backup/

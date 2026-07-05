@@ -1,0 +1,301 @@
+<!-- BUILTIN_PROMPT
+小说风格模板。适用于：叙事、故事、对话场景、沉浸式阅读。
+语义标签：<q>对话台词</q>、<inner>内心独白</inner>、<act>动作描写</act>、<scene>场景描写</scene>、<aside>旁白叙述</aside>
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        html, body {
+            width: fit-content;
+            min-width: 100%;
+            max-width: 700px;
+        }
+        
+        body {
+            font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "SimSun", serif;
+            background: #4a4a4a;
+            padding: 40px;
+        }
+
+        .page {
+            background: #fdf6e3;
+            background-image: linear-gradient(to right, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0) 5%, rgba(0,0,0,0) 95%, rgba(0,0,0,0.02) 100%);
+            width: 100%;
+            padding: 60px 50px;
+            box-shadow: 
+                0 2px 5px rgba(0,0,0,0.1),
+                0 10px 40px rgba(0,0,0,0.4);
+            position: relative;
+            min-width: 350px;
+        }
+
+        .page::before {
+            content: "";
+            position: absolute;
+            left: 20px;
+            top: 20px;
+            bottom: 20px;
+            width: 1px;
+            border-left: 1px dashed #d3c6a6;
+        }
+
+        .content {
+            font-size: 18px;
+            line-height: 2.0;
+            color: #2b2b2b;
+            text-align: justify;
+            width: 100%;
+            /* 关键：限制内容宽度，强制换行 */
+            max-width: 100%;
+            overflow: hidden;
+        }
+
+        /* ===== 全局防溢出（关键修复） ===== */
+        .content * {
+            max-width: 100% !important;
+            word-wrap: break-word !important;
+            word-break: break-all !important;
+            overflow-wrap: anywhere !important;
+            box-sizing: border-box !important;
+        }
+        
+        /* 对于行内元素，使用 break-word 而非 break-all */
+        .content q, .content inner, .content act, .content code {
+            word-break: break-word !important;
+        }
+
+        /* 段落 */
+        .content p {
+            margin-bottom: 0.5em;
+            text-indent: 2em;
+        }
+        .content p:last-child { margin-bottom: 0; }
+        
+        /* 标题 */
+        .content h1, .content h2, .content h3 {
+            text-indent: 0;
+            text-align: center;
+            font-weight: bold;
+            color: #1a1a1a;
+            margin-top: 1.5em;
+            margin-bottom: 1em;
+        }
+        .content h1 { font-size: 24px; margin-top: 0; }
+        
+        /* 引用块 */
+        .content blockquote {
+            text-indent: 0;
+            margin: 1.5em 1em;
+            padding: 0.5em 1em;
+            border-left: 3px solid #d3c6a6;
+            color: #666;
+            font-style: italic;
+            background: rgba(201, 184, 150, 0.05);
+        }
+
+        /* 列表 */
+        .content ul, .content ol {
+            text-indent: 0;
+            margin-left: 1.5em;
+            margin-bottom: 1em;
+            padding-left: 0.5em;
+        }
+        
+        .content li {
+            margin-bottom: 0.3em;
+        }
+
+        /* 分割线 */
+        .content hr {
+            border: 0;
+            height: 1px;
+            background-image: linear-gradient(to right, rgba(0,0,0,0), rgba(0,0,0,0.2), rgba(0,0,0,0));
+            margin: 2em 0;
+        }
+
+        /* ===== 语义标签样式 ===== */
+        
+        /* 对话 */
+        q {
+            color: #8B4513;
+            font-style: normal;
+            background: rgba(139, 69, 19, 0.06);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+            display: inline;
+        }
+        q::before { 
+            content: """; 
+            color: #c9b896; 
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        q::after { 
+            content: """; 
+            color: #c9b896; 
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        /* 内心想法 */
+        inner {
+            color: #808080;
+            font-style: italic;
+            background: rgba(128, 128, 128, 0.08);
+            padding: 2px 6px;
+            border-radius: 3px;
+            display: inline;
+        }
+        inner::before { content: "（"; opacity: 0.5; }
+        inner::after { content: "）"; opacity: 0.5; }
+        
+        /* 动作描写 */
+        act {
+            color: #696969;
+            font-style: italic;
+            font-weight: 500;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-decoration-color: rgba(105, 105, 105, 0.3);
+            text-underline-offset: 3px;
+            display: inline;
+        }
+        
+        /* 场景描写 */
+        scene {
+            display: block;
+            color: #5a6a5a;
+            background: linear-gradient(to right, rgba(201,184,150,0.2), transparent);
+            padding: 10px 16px;
+            border-left: 3px solid #c9b896;
+            margin: 1em 0;
+            text-indent: 0;
+            font-style: italic;
+        }
+        
+        /* 旁白 */
+        aside {
+            display: block;
+            color: #888;
+            font-size: 0.9em;
+            text-align: center;
+            margin: 1.5em 0;
+            font-style: italic;
+            text-indent: 0;
+        }
+        aside::before { content: "※ "; }
+        aside::after { content: " ※"; }
+
+        /* ===== details 折叠块（关键修复） ===== */
+        
+        .content details {
+            margin: 1em 0;
+            padding: 0;
+            border: 1px solid #d3c6a6;
+            border-radius: 6px;
+            background: rgba(201, 184, 150, 0.05);
+            width: 100%;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        
+        .content summary {
+            padding: 10px 16px;
+            cursor: pointer;
+            font-weight: 600;
+            background: rgba(201, 184, 150, 0.1);
+            border-radius: 6px 6px 0 0;
+            user-select: none;
+            text-indent: 0;
+            display: block;
+        }
+        
+        .content summary:hover {
+            background: rgba(201, 184, 150, 0.15);
+        }
+        
+        .content details[open] summary {
+            border-bottom: 1px solid #d3c6a6;
+            border-radius: 6px 6px 0 0;
+        }
+        
+        /* details 内部内容容器 */
+        .content details > *:not(summary) {
+            padding: 10px 16px;
+            text-indent: 0;
+            max-width: 100%;
+            display: block;
+        }
+        
+        /* details 内容：保留换行 + 强制断行 */
+        .content details,
+        .content details * {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere !important;
+            word-break: break-all !important;
+        }
+
+        .content details p {
+            text-align: left;
+            margin-bottom: 0.5em;
+        }
+        
+        /* ===== 代码块 ===== */
+        .content pre {
+            background: #f5f0e6;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin: 1em 0;
+            overflow-x: auto;
+            max-width: 100%;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .content code {
+            background: #f5f0e6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: "Consolas", "Monaco", "Courier New", monospace;
+            font-size: 0.9em;
+        }
+        
+        .content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        /* ===== 表格 ===== */
+        .content table {
+            width: 100%;
+            max-width: 100%;
+            border-collapse: collapse;
+            margin: 1em 0;
+            font-size: 0.95em;
+            table-layout: fixed;
+        }
+        
+        .content th, .content td {
+            border: 1px solid #d3c6a6;
+            padding: 8px 12px;
+            text-align: left;
+            word-break: break-all;
+        }
+        
+        .content th {
+            background: rgba(201, 184, 150, 0.15);
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="content">{{content}}</div>
+    </div>
+</body>
+</html>
