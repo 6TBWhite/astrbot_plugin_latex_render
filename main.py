@@ -56,7 +56,7 @@ def _contains_math(content: str) -> bool:
     "astrbot_plugin_latex_render",
     "6TBWhite & Para",
     "LLM能够主动调用的图片渲染工具，可支持文本、LaTeX/Markdown 内容，支持本地字体与自定义模板。",
-    "1.0.1",
+    "1.0.2",
 )
 class LatexRenderPlugin(Star):
     def __init__(self, context: Context, config: dict):
@@ -124,17 +124,18 @@ class LatexRenderPlugin(Star):
     async def _ensure_playwright(self):
         browsers_dir = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
         if browsers_dir and os.path.isdir(browsers_dir):
-            has_chromium = any(
-                name.lower().startswith("chromium") for name in os.listdir(browsers_dir)
+            has_headless = any(
+                name.lower().startswith("chromium_headless_shell")
+                for name in os.listdir(browsers_dir)
             )
-            if has_chromium:
-                logger.info("HTML渲染插件: Playwright Chromium 已存在，跳过安装")
+            if has_headless:
+                logger.info("HTML渲染插件: Playwright Chromium headless shell 已存在，跳过安装")
                 return
 
         logger.info("HTML渲染插件: 检查 Playwright 依赖...")
         try:
             process = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "playwright", "install", "chromium",
+                sys.executable, "-m", "playwright", "install", "chromium-headless-shell",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

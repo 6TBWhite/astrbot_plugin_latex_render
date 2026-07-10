@@ -193,12 +193,14 @@ fc-list :lang=zh | head
 
 **本插件已内置修复**（v1.0.0+）：插件初始化时将 `PLAYWRIGHT_BROWSERS_PATH` 设置为 AstrBot 数据目录下的 `data/plugin_data/astrbot_plugin_latex_render/playwright_browsers/`，Chromium 从此随 AstrBot 备份一起保留。
 
+**v1.0.2 优化**：插件只用 headless 模式渲染，现在仅安装 `chromium-headless-shell`（~270MB）而非完整 Chromium（~415MB），磁盘占用减半。检测到已存在则跳过安装。
+
 如果你仍遇到此问题，可能是旧版插件的残留浏览器尚未迁移：
 
 ```bash
 # 进入 AstrBot venv 所在目录，删除旧缓存后重新安装
 rmdir /s /q "%LOCALAPPDATA%\ms-playwright"
-# 重启 AstrBot，插件会自动在新路径下安装 Chromium（首次 ~273MB）
+# 重启 AstrBot，插件会自动在新路径下安装 Chromium headless shell（首次 ~270MB）
 ```
 
 ### 手动验证 Playwright 浏览器路径

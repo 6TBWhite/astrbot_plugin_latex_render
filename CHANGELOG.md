@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-07-10：v1.0.2 Chromium 安装优化（磁盘占用减半）
+
+### 摘要
+
+插件渲染只用 headless 模式，但 `playwright install chromium` 会同时下载完整 Chromium（~415MB）和 headless shell（~270MB），完整版从未被使用。改为只安装 `chromium-headless-shell`，新用户磁盘占用从 ~688MB 降至 ~273MB。
+
+### 改动
+
+- `_ensure_playwright()` 安装命令从 `playwright install chromium` 改为 `playwright install chromium-headless-shell`，只下载 headless shell 变体
+- 已存在检测从匹配 `chromium*` 改为精确匹配 `chromium_headless_shell*`，避免误判完整版存在而跳过 headless shell 安装
+- README 问题排查章节同步更新（提及 headless shell、~270MB）
+- 版本号 1.0.1 → 1.0.2
+
+### 背景
+
+Playwright 1.40+ 的 `playwright install chromium` 会同时下载两个变体：
+- `chromium-XXXX`（~415MB）— 完整版浏览器，供 `headless=False` 使用
+- `chromium_headless_shell-XXXX`（~270MB）— 精简版，供 `headless=True` 使用
+
+`renderer.py` 的 `chromium.launch()` 未传 `headless` 参数，Playwright 默认 `headless=True`，所以完整版 Chromium 从未被加载，纯属浪费磁盘。
+
+### 对现有用户的影响
+
+升级后不会自动删除旧的 `chromium-XXXX` 目录。如需回收 ~415MB 磁盘空间，手动删除 `playwright_browsers/chromium-*`（保留 `chromium_headless_shell-*`）即可。
+
+---
+
 ## 2026-07-10：v1.0.1 体积优化与元数据补全
 
 ### 摘要
