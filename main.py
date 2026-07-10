@@ -122,6 +122,15 @@ class LatexRenderPlugin(Star):
                 raise
 
     async def _ensure_playwright(self):
+        browsers_dir = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
+        if browsers_dir and os.path.isdir(browsers_dir):
+            has_chromium = any(
+                name.lower().startswith("chromium") for name in os.listdir(browsers_dir)
+            )
+            if has_chromium:
+                logger.info("HTML渲染插件: Playwright Chromium 已存在，跳过安装")
+                return
+
         logger.info("HTML渲染插件: 检查 Playwright 依赖...")
         try:
             process = await asyncio.create_subprocess_exec(

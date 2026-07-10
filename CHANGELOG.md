@@ -1,6 +1,54 @@
 # 开发变更记录
 
-> 内部参考，供重载后核对。时间倒序（最新在最前）。
+> 时间倒序（最新在最前）。
+
+---
+
+## 2026-07-10：v1.0.1 体积优化与元数据补全
+
+### 摘要
+
+插件体积从 18.30 MB 降至 2.18 MB（-88%），主要来自移除从未被加载的内置字体文件；同时对齐 AstrBot 插件开发指南，补全 `metadata.yaml` 可选字段；优化 Playwright 启动流程。
+
+### 改动
+
+**1. 移除 fonts/ 目录（-15.9 MB）**
+
+- 删除 8 套 Google Fonts woff2 字体文件、`fonts_local.css`、`manifest.json`（共 409 个文件）
+- 原因：内置模板 `classic` / `novel` 只用系统字体名（思源黑体、苹方、微软雅黑等），从不请求 `fonts.gstatic.com` URL，`renderer.py` 的字体路由拦截逻辑不会触发，这些字体从未被加载
+- `renderer.py` 的路由拦截逻辑保留，`manifest.json` 不存在时优雅降级（输出 debug 日志 + abort 请求），无需改代码
+
+**2. README 新增两节**
+
+- 「字体说明」：解释内置模板依赖系统字体、自定义模板的回退行为、如何恢复内置字体
+- 「Linux 服务器字体要求」：裸 Linux 默认不装 CJK 字体会导致中文渲染成豆腐块，给出 apt/yum 安装命令和 `fc-list :lang=zh` 验证方式
+
+**3. metadata.yaml 补全（对齐开发指南）**
+
+| 字段 | 值 |
+|------|-----|
+| `display_name` | LaTeX/Markdown 图片渲染器 |
+| `short_desc` | LLM 调用本地工具，把文本/Markdown/LaTeX 渲染成图片。 |
+| `repo` | https://github.com/6TBWhite/astrbot_plugin_latex_render |
+| `astrbot_version` | `>=4.26.3`（PEP 440 格式） |
+| `version` | 1.0.0 → 1.0.1 |
+
+**4. Playwright 启动优化**
+
+- `_ensure_playwright()` 增加 Chromium 已存在检测：扫描 `PLAYWRIGHT_BROWSERS_PATH` 目录下是否有 `chromium*` 子目录，已存在则跳过 `playwright install chromium` subprocess 调用
+- 效果：后续启动不再每次 spawn subprocess，初始化更快
+
+**5. 其他**
+
+- `main.py` `@register` 版本号同步至 1.0.1
+- `logo.png` 纳入版本控制（之前未被 git 跟踪）
+- `CHANGELOG_DEV.md` 重命名为 `CHANGELOG.md`（去掉 `_DEV` 后缀，符合命名规范）
+
+### 对用户的影响
+
+- 内置 `classic` / `novel` 模板：无影响，渲染效果取决于宿主系统是否装了中文字体
+- 自定义模板用 `@font-face` 指 Google Fonts：Playwright 路由拦截会 abort 请求，回退到 `font-family` 后备系统字体
+- 想恢复内置字体：重新放回 `fonts/` 目录 + `manifest.json` 即可，`renderer.py` 字体路由会自动识别
 
 ---
 
