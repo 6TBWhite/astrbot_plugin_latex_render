@@ -145,6 +145,44 @@ render_to_image(
 - MathJax 使用本地副本渲染（`mathjax-tex-svg.js`），无需联网
 - `templates` 目录不能为空，否则渲染会直接报错
 
+### 字体说明（v1.0.1+ 体积优化）
+
+本插件内置模板（`classic`、`novel`）只使用系统字体名（思源黑体、思源宋体、苹方、微软雅黑、宋体等），不依赖任何 Google Fonts 在线字体。渲染时由 Playwright/Chromium 调用宿主系统已安装的字体完成排版。
+
+早期版本曾内置 8 套 Google Fonts 字体文件（`fonts/` 目录，约 15.9 MB），但这些字体不会被内置模板加载，只会被用户自定义的、通过 `fonts.gstatic.com` URL 引用字体的 HTML 模板用到。为减小插件体积，自 v1.0.1 起 **不再内置字体文件**，`fonts/` 目录已移除。
+
+**对你有什么影响：**
+
+- 使用内置 `classic` / `novel` 模板：**无任何影响**，渲染效果取决于宿主系统是否装了对应的中文字体（大多数桌面环境都自带）。
+- 自定义模板中用 `@font-face` 指向 Google Fonts 的：Playwright 的路由拦截（`renderer.py`）会 abort 这些请求，页面将回退到 CSS 中声明的 `font-family` 后备系统字体。若你的自定义模板强依赖某种在线字体，请自行把对应的 `.woff2` 文件放到模板能访问的位置，并在模板里用相对路径 `@font-face` 引用。
+
+> 想恢复内置字体的话，只需重新放回 `fonts/` 目录并保留 `manifest.json`（URL → 本地路径映射），`renderer.py` 的字体路由逻辑会自动识别。
+
+### Linux 服务器字体要求
+
+内置模板的 `font-family` 声明了一串系统字体名（思源黑体、思源宋体、苹方、微软雅黑、宋体等），渲染时由 Playwright/Chromium 调用**宿主系统已安装**的字体完成排版。Windows / macOS 自带中文字体，无需额外处理；但**裸 Linux 服务器默认不装 CJK 字体**，中文会渲染成豆腐块 □□□。
+
+**解决方法**（装完无需重启 AstrBot，下次渲染自动生效）：
+
+```bash
+# Ubuntu / Debian
+sudo apt install fonts-noto-cjk fonts-noto-cjk-extra
+
+# CentOS / RHEL / Fedora
+sudo yum install google-noto-sans-cjk-ttc google-noto-serif-cjk-ttc
+# 或（较新版本）
+sudo dnf install google-noto-sans-cjk-fonts google-noto-serif-cjk-fonts
+```
+
+验证是否安装成功：
+
+```bash
+fc-list :lang=zh | head
+# 应输出若干 .ttc / .otf 路径，说明系统中已有可用中文字体
+```
+
+> ⚠️ 插件不会主动检测或安装系统字体。若渲染结果出现方块/缺字，请先在宿主机上按上面命令装好 CJK 字体，再重新渲染验证。
+
 ## 问题排查
 
 ### AstrBot 更新/降级后渲染失败（Chromium 浏览器丢失）

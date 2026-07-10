@@ -1,5 +1,8 @@
 name: astrbot_plugin_latex_render
-description: LLM能够主动调用的图片渲染工具，可支持文本、LaTeX/Markdown 内容，支持本地字体与自定义模板。
+display_name: LaTeX/Markdown 图片渲染器
+short_desc: LLM 调用本地工具，把文本/Markdown/LaTeX 渲染成图片。
+description: LLM能够主动调用的图片渲染工具，可支持文本、LaTeX/Markdown 内容，依赖系统字体，支持自定义模板。
 author: 6TBWhite & Para
-version: 1.0.0
-repo: ""
+version: 1.0.1
+repo: "https://github.com/6TBWhite/astrbot_plugin_latex_render"
+astrbot_version: ">=4.26.3"

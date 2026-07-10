@@ -56,7 +56,7 @@ def _contains_math(content: str) -> bool:
     "astrbot_plugin_latex_render",
     "6TBWhite & Para",
     "LLM能够主动调用的图片渲染工具，可支持文本、LaTeX/Markdown 内容，支持本地字体与自定义模板。",
-    "1.0.0",
+    "1.0.1",
 )
 class LatexRenderPlugin(Star):
     def __init__(self, context: Context, config: dict):
