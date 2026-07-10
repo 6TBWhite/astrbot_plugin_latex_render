@@ -36,7 +36,7 @@ AstrBot 通常会在插件安装时自动安装以上依赖。如果自动安装
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
+playwright install chromium-headless-shell
 ```
 
 ### 3. 配置文件
