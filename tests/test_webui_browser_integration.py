@@ -207,7 +207,7 @@ $$
         "plugin": {
             "id": "astrbot_plugin_latex_render",
             "display_name": "LaTeX / Markdown 图片渲染",
-            "version": "1.0.8",
+            "version": "1.0.9",
         },
         "config_fields": config_fields,
         "templates": templates,

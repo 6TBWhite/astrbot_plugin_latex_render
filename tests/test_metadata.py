@@ -16,7 +16,7 @@ def test_market_metadata_is_complete_and_consistent() -> None:
 
     assert version_match is not None
     assert metadata["id"] == metadata["name"] == "astrbot_plugin_latex_render"
-    assert metadata["version"] == version_match.group(1) == "1.0.8"
+    assert metadata["version"] == version_match.group(1) == "1.0.9"
     assert metadata["type"] == "star"
     assert metadata["category"] == "工具"
     assert metadata["branch"] == "master"
@@ -27,15 +27,19 @@ def test_market_metadata_is_complete_and_consistent() -> None:
     assert metadata["requirements"] == []
 
 
-def test_v107_is_documented_as_unreleased_development_version() -> None:
+def test_v109_is_documented_as_release() -> None:
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
     changelog = (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert "release-v1.0.8" in readme
-    assert "当前发布版本为 `1.0.8`" in readme
-    assert "development-v1.0.8" not in readme
+    assert "release-v1.0.9" in readme
+    assert "当前发布版本为 `1.0.9`" in readme
+    assert "development-v1.0.9" not in readme
+    assert "支持自动分页与 A4 版式" in readme
+    assert "v1.0.9 文档表述与发布信息修订" in changelog
     assert "v1.0.8 安全分页与可视化渲染工作台" in changelog
-    assert "v1.0.8 安全分页与可视化渲染工作台（未发布）" not in changelog
+    for marker in ("未发布", "尚未发布", "开发中"):
+        assert marker not in readme
+        assert marker not in changelog
 
 
 def test_readme_promotes_webui_with_explicit_product_boundaries() -> None:
@@ -45,7 +49,7 @@ def test_readme_promotes_webui_with_explicit_product_boundaries() -> None:
     assert readme.index("## WebUI 渲染工作台") < readme.index("## 渲染流程")
     assert "#/plugin-page/astrbot_plugin_latex_render/studio" in readme
     assert "preview API 与 `render_to_image` 工具复用" in readme
-    assert "不模拟消息平台的传输与显示行为" in readme
+    assert "preview API 与正式渲染共用" in readme
     assert "完整配置仍在 AstrBot 配置页" in readme
     assert "只维护一个 `custom`" in readme
     assert "短引导段会与紧随的公式、表格、代码或列表保持在同一页" in readme
@@ -60,6 +64,11 @@ def test_readme_promotes_webui_with_explicit_product_boundaries() -> None:
         "古典调试法",
         "纯属浪费磁盘",
         "砍掉的内容",
+        "标签模式让用户和 AI 都得猜",
+        "工具模式让 AI 自己决策",
+        '长"功能说明书"',
+        '从"功能说明书"改为"决策卡片"',
+        "优雅降级",
     ]:
         assert casual_copy not in readme
         assert casual_copy not in changelog

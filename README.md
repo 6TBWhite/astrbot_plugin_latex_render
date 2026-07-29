@@ -1,11 +1,11 @@
 <div align="center">
   <img src="logo.png" width="88" alt="LaTeX Render Logo" />
   <h1>LaTeX Render</h1>
-  <p><strong>将 Markdown、LaTeX、表格与长内容稳定渲染为适合聊天阅读的图片。</strong></p>
+  <p><strong>支持自动分页与 A4 版式。</strong></p>
   <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，管理员也可以在渲染工作台中实时预览、调参和管理自定义模板。</p>
   <p>
     <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
-    <img src="https://img.shields.io/badge/release-v1.0.8-2EA44F?style=flat-square" alt="Release v1.0.8" />
+    <img src="https://img.shields.io/badge/release-v1.0.9-2EA44F?style=flat-square" alt="Release v1.0.9" />
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F855A?style=flat-square" alt="MIT License" /></a>
   </p>
@@ -28,7 +28,9 @@ LaTeX Render 给 AstrBot 增加一个 `render_to_image` 工具：LLM 先写完�
 
 v1.0.8 新增独立的 WebUI 渲染工作台。管理员可以在 AstrBot 插件页面中调整常用设置、查看运行状态、使用真实内容预览模板，并维护唯一的 `custom` 模板。工作台的 preview API 与 `render_to_image` 工具复用模板解析、分页和 Chromium 截图组件；聊天侧仍需经过 AstrBot 消息链与平台适配器发送。
 
-当前发布版本为 `1.0.8`，要求 AstrBot `>=4.26.3`。
+v1.0.9 修订 README、CHANGELOG 与发布信息，不改变渲染行为和配置接口。
+
+当前发布版本为 `1.0.9`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
@@ -61,7 +63,7 @@ v1.0.8 新增独立的 WebUI 渲染工作台。管理员可以在 AstrBot 插件
 http://<AstrBot 地址>/#/plugin-page/astrbot_plugin_latex_render/studio
 ```
 
-工作台通过 preview API 调用本地 Chromium，复用正式渲染的模板解析、分页与截图组件；它不使用静态缩略图代替渲染结果，也不模拟消息平台的传输与显示行为。
+工作台的 preview API 与正式渲染共用模板解析、分页和 Chromium 截图组件。
 
 | 区域 | 功能 | 边界 |
 | --- | --- | --- |
@@ -195,7 +197,7 @@ python -m pip install -r requirements.txt
 
 ## 配置
 
-以下配置均可在 AstrBot **配置页**修改，并与 `_conf_schema.json` 保持一致。插件独立的**渲染工作台**只收纳常用项，避免把完整配置表原样再抄一遍。
+常用设置可在插件的**渲染工作台**中修改，其余选项保留在 AstrBot **配置页**；两处均使用 `_conf_schema.json` 中的配置定义。
 
 | 配置项 | 默认值 | 说明 |
 | --- | ---: | --- |
@@ -271,7 +273,7 @@ render_to_image(
 
 ### `classic`
 
-适合讲题、结构化知识、公式、代码和表格。绿色外框与浅色画布针对聊天窗口阅读优化，正文、标题、行高和边距均可在渲染工作台调整。
+`classic` 用于讲题、结构化知识、公式、代码和表格，使用绿色外框与浅色画布；正文、标题、行高和边距可在渲染工作台调整。
 
 ### `novel`
 
@@ -385,7 +387,7 @@ ASTRBOT_LATEX_RENDER_INTEGRATION=1 python -m pytest -q
 
 真实 WebUI 测试会注入一个本地 AstrBot Bridge，实际点击设置分区、模板画廊和 Custom 页面，并验证普通滚轮、组合缩放、等高画布、移动端顺序与 Markdown 保护高度。若 Chromium 安装在 AstrBot 插件数据目录，还需将 `PLAYWRIGHT_BROWSERS_PATH` 设置为该目录。
 
-适配器向实际消息平台发送图片的最后一跳仍需在 AstrBot 中重载插件后至少执行一次 `/测试` 验证；本仓库不会在版本号更新时自动创建 GitHub Release。
+适配器向实际消息平台发送图片的最后一跳仍需在 AstrBot 中重载插件后至少执行一次 `/测试` 验证。
 
 ## 致谢与许可
 
