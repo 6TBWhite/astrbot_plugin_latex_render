@@ -75,20 +75,20 @@ https://github.com/6TBWhite/astrbot_plugin_latex_render
 
 ### 依赖分工
 
-别把 `pip install` 成功当成万事大吉，Playwright 偏偏还带着浏览器和系统库两位不肯住进 `requirements.txt` 的祖宗。
+Python 依赖、浏览器二进制和操作系统组件采用不同的安装方式。请根据下表确认当前环境还需要完成哪些步骤。
 
 | 依赖 | 默认处理方式 | 是否可能需要手动安装 |
 | --- | --- | --- |
 | `playwright`、`mistune`、`Pillow` | AstrBot 根据 `requirements.txt` 自动安装 | 仅在 AstrBot 自动安装失败时 |
 | Chromium headless shell | 插件首次启动时自动下载到插件数据目录 | 网络受限、无写入权限或自动下载失败时 |
-| Chromium 系统库 | Python 包和插件都不会替你取得 root 权限 | **Linux / Docker 精简镜像通常必须手动安装** |
+| Chromium 系统库 | 需要由具备 root 权限的用户安装 | **Linux / Docker 精简镜像通常必须手动安装** |
 | CJK 中文字体 | 使用宿主机已有字体 | **裸 Linux / 精简容器通常必须手动安装** |
 
 ### 必看：不会自动安装的项目
 
 #### 1. Linux 的 Chromium 系统库
 
-插件不会、也不应该在启动时调用 `sudo`。Debian / Ubuntu 及受支持的 Linux 环境中，请在 AstrBot 使用的同一 Python 环境里执行：
+插件启动过程不会调用 `sudo` 安装操作系统组件。Debian / Ubuntu 及受支持的 Linux 环境中，请在 AstrBot 使用的同一 Python 环境里执行：
 
 ```bash
 sudo python -m playwright install-deps chromium
@@ -98,7 +98,7 @@ Docker 部署请进入 AstrBot 容器，并以具备包管理权限的用户执�
 
 #### 2. Linux 的中文字体
 
-裸 Linux 和精简容器常常没有 CJK 字体，缺少时中文会显示为方块。
+裸 Linux 和精简容器可能未预装 CJK 字体，缺少时中文会显示为方块。
 
 ```bash
 # Ubuntu / Debian
@@ -118,11 +118,11 @@ sudo dnf install -y google-noto-sans-cjk-fonts google-noto-serif-cjk-fonts
 fc-list :lang=zh | head
 ```
 
-能够列出 `.ttc` 或 `.otf` 文件才算装好。插件不会自动检测或安装系统字体。
+若命令能够列出 `.ttc` 或 `.otf` 文件，说明系统已提供可用中文字体。插件不会自动安装系统字体。
 
 #### 3. 自动下载 Chromium 失败时
 
-启动日志会打印插件实际使用的 `Playwright 浏览器路径`。手动安装时必须把 `PLAYWRIGHT_BROWSERS_PATH` 指向同一路径，否则浏览器会装进系统缓存，而插件仍旧一本正经地说没看见。
+启动日志会输出插件实际使用的 `Playwright 浏览器路径`。手动安装时必须将 `PLAYWRIGHT_BROWSERS_PATH` 设置为该路径；否则浏览器二进制会写入 Playwright 默认缓存目录，插件仍会判定目标目录中缺少 Chromium。
 
 Linux / macOS：
 
@@ -192,7 +192,7 @@ render_to_image(
 
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
-| `content` | 是 | 要渲染的完整内容，不要再包 `<render>` 标签 |
+| `content` | 是 | 要渲染的完整内容，无需额外包含 `<render>` 标签 |
 | `template` | 否 | `classic`、`novel` 或其他已有模板名；留空使用用户默认 |
 
 ### 用户命令
@@ -203,7 +203,7 @@ render_to_image(
 | `/切换 <名称或 ID>` | `/switch` | 切换当前用户的默认模板 |
 | `/查看` | `/templates` | 查看模板列表与当前模板 |
 | `/预览模板 <名称或 ID> [文本]` | `/previewtpl`、`/tplpreview` | 临时预览，不修改默认模板 |
-| `/探针gif` | `/probegif` | 输出三帧诊断截图；这是排障命令，不是 GIF 产品功能 |
+| `/探针gif` | `/probegif` | 输出三帧诊断截图；仅用于排障，不提供 GIF 动画渲染功能 |
 
 ### `classic`
 
@@ -221,13 +221,13 @@ render_to_image(
 | `<scene>` | 场景描写 |
 | `<aside>` | 旁白 |
 
-自定义模板放入 `templates/`，文件扩展名必须为 `.html`，并保留 `{{content}}` 占位符。模板使用 UTF-8 编码；目录为空时插件会拒绝带病启动。
+自定义模板放入 `templates/`，文件扩展名必须为 `.html`，并保留 `{{content}}` 占位符。模板使用 UTF-8 编码；若目录中没有可用模板，插件初始化将失败并输出错误日志。
 
 ## 字体与外部资源
 
 内置模板只声明思源黑体、思源宋体、苹方、微软雅黑、宋体等系统字体，不携带字体文件，也不依赖 Google Fonts。渲染效果由宿主机实际安装的字体决定。
 
-Playwright 会阻断 Google Fonts 请求以避免渲染被外网拖住。自定义模板若需要固定字体，请把 `.woff2` 等文件随插件部署，并通过本地路径引用；仅写在线字体 URL 会回退到后备系统字体。
+Playwright 会阻断 Google Fonts 请求，避免外部网络请求影响渲染稳定性。自定义模板若需要固定字体，请将 `.woff2` 等文件随插件部署，并通过本地路径引用；仅配置在线字体 URL 时会回退到后备系统字体。
 
 MathJax 使用仓库内的 `mathjax-tex-svg.js`，正常渲染无需连接 CDN。
 
@@ -240,22 +240,22 @@ MathJax 使用仓库内的 `mathjax-tex-svg.js`，正常渲染无需连接 CDN�
 3. 在 AstrBot 的 Python 环境中重新安装 headless shell。
 4. Linux 再执行 `python -m playwright install-deps chromium`。
 
-AstrBot 更新后无需删除浏览器目录；插件把它放在 `data/plugin_data` 下，就是为了随数据备份保留。
+AstrBot 更新后通常无需删除浏览器目录。该目录位于 `data/plugin_data` 下，可随 AstrBot 数据备份一并保留。
 
 ### 中文显示成方块
 
-运行 `fc-list :lang=zh | head`。没有输出就安装 Noto CJK 字体；有输出仍异常时，检查自定义模板的 `font-family` 是否只写了宿主机不存在的字体。
+运行 `fc-list :lang=zh | head`。若无输出，请安装 Noto CJK 字体；若有输出但显示仍异常，请检查自定义模板的 `font-family` 是否仅包含宿主机未安装的字体。
 
 ### 公式没有渲染
 
 - 确认 `enable_math = true`。
 - 使用受支持的分隔符：`$...$`、`$$...$$`、`\(...\)` 或 `\[...\]`。
 - 查看日志是否成功加载本地 `mathjax-tex-svg.js`。
-- 不要把公式放进代码块；代码块中的 `$...$` 会按普通代码保留。
+- 公式不应放入代码块；代码块中的 `$...$` 会按普通代码保留。
 
 ### 图片底部被截断或渲染失败
 
-- 先把 `render_scale` 调回 `2`，避免超大图片耗尽内存。
+- 将 `render_scale` 调整为 `2`，避免超大图片耗尽内存。
 - 用 `/测试` 排除自定义内容和模板问题。
 - 确认 `templates/` 至少有一个包含 `{{content}}` 的 HTML 文件。
 - 若只有自定义模板失败，先移除脚本、远程资源和异常 CSS 再逐项恢复。
@@ -285,7 +285,7 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
-完整渲染还需要在 AstrBot 中重载插件，并至少执行一次 `/测试`。纯单元测试不会替你下载 Chromium，也不会假装一张图已经真的发出去了。
+完整渲染仍需在 AstrBot 中重载插件，并至少执行一次 `/测试`。单元测试不覆盖 Chromium 下载和消息平台图片发送链路。
 
 ## 致谢与许可
 
