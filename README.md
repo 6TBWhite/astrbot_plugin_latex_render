@@ -5,7 +5,7 @@
   <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，用户也可以通过命令查看模板列表并切换默认模板。</p>
   <p>
     <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
-    <a href="https://github.com/6TBWhite/astrbot_plugin_latex_render/releases"><img src="https://img.shields.io/badge/release-v1.0.4-7357D9?style=flat-square" alt="Release v1.0.4" /></a>
+    <a href="https://github.com/6TBWhite/astrbot_plugin_latex_render/releases"><img src="https://img.shields.io/badge/release-v1.0.5-7357D9?style=flat-square" alt="Release v1.0.5" /></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F855A?style=flat-square" alt="MIT License" /></a>
   </p>
@@ -25,7 +25,7 @@
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前稳定版本为 `1.0.4`，要求 AstrBot `>=4.26.3`。
+当前稳定版本为 `1.0.5`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
