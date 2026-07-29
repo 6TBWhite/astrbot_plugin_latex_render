@@ -5,7 +5,7 @@
   <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，管理员也可以在渲染工作台中实时预览、调参和管理自定义模板。</p>
   <p>
     <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
-    <img src="https://img.shields.io/badge/development-v1.0.8-7357D9?style=flat-square" alt="Development v1.0.8" />
+    <img src="https://img.shields.io/badge/release-v1.0.8-2EA44F?style=flat-square" alt="Release v1.0.8" />
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F855A?style=flat-square" alt="MIT License" /></a>
   </p>
@@ -28,7 +28,7 @@
 
 v1.0.8 新增独立的 WebUI 渲染工作台。管理员可以在 AstrBot 插件页面中调整常用设置、查看运行状态、使用真实内容预览模板，并维护唯一的 `custom` 模板。工作台的 preview API 与 `render_to_image` 工具复用模板解析、分页和 Chromium 截图组件；聊天侧仍需经过 AstrBot 消息链与平台适配器发送。
 
-当前开发版本为 `1.0.8`（尚未发布），要求 AstrBot `>=4.26.3`。
+当前发布版本为 `1.0.8`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 

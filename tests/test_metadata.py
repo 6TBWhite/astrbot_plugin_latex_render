@@ -31,10 +31,11 @@ def test_v107_is_documented_as_unreleased_development_version() -> None:
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
     changelog = (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert "development-v1.0.8" in readme
-    assert "当前开发版本为 `1.0.8`（尚未发布）" in readme
-    assert "release-v1.0.8" not in readme
-    assert "v1.0.8 安全分页与可视化渲染工作台（未发布）" in changelog
+    assert "release-v1.0.8" in readme
+    assert "当前发布版本为 `1.0.8`" in readme
+    assert "development-v1.0.8" not in readme
+    assert "v1.0.8 安全分页与可视化渲染工作台" in changelog
+    assert "v1.0.8 安全分页与可视化渲染工作台（未发布）" not in changelog
 
 
 def test_readme_promotes_webui_with_explicit_product_boundaries() -> None:
