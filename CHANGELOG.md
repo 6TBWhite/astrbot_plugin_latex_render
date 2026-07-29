@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-07-29：v1.0.4 功能审计与端到端测试
+
+### 摘要
+
+逐项核对 README 中声明的 Markdown、LaTeX、模板选择、本地渲染、用户命令和 Agent 工具功能，并为用户入口与 Agent 调用补充行为测试及真实 Chromium 集成测试。运行代码和静态资源重新归档，根目录仅保留 AstrBot 入口、配置、元数据与项目文档。
+
+### 改动
+
+- 新增 `/测试`、`/切换`、`/查看`、`/预览模板` 的命令调用测试
+- 新增 `render_to_image` 的成功、空内容、未知模板和发送失败路径测试
+- 新增完整渲染管线测试，覆盖 Markdown 表格、LaTeX、内置 MathJax、模板应用和 JPEG 输出参数
+- 新增真实 Chromium 集成测试，从用户命令和 Agent 工具入口生成图片，并验证 GIF 探针三帧输出
+- 隐藏原文只在图片成功生成并发送后写入缓冲，渲染失败不再留下无效上下文
+- 模板发现阶段忽略缺少 `{{content}}` 占位符或无法读取的 HTML 文件
+- 修复 GIF 探针仍查询旧 `.danmu-line` 选择器的问题，改为检测实际使用的 `.track` 动画元素
+- 移除 AstrBot 已弃用的 `@register` 装饰器，插件信息统一由 `metadata.yaml` 提供
+- 将渲染、文本和模板模块整理至 `core/`，将离线 MathJax 归档至 `assets/`
+
+### 验证
+
+- `python -m pytest -q`
+- `ASTRBOT_LATEX_RENDER_INTEGRATION=1 python -m pytest -q`
+- `python -m ruff check .`
+- `python -m ruff format --check .`
+- `python -m compileall -q .`
+
+---
+
 ## 2026-07-29：v1.0.3 指南合规与发布信息整理
 
 ### 摘要
@@ -124,12 +152,6 @@ os.environ["PLAYWRIGHT_BROWSERS_PATH"] = playwright_browsers_dir
 - 浏览器二进制从系统缓存移入 AstrBot 管理的 `data/` 目录（headless shell ~273MB）
 - 首次启动自动安装，后续启动检测已存在则跳过
 - AstrBot 更新/降级时浏览器二进制随 `data/` 备份恢复，不再丢失
-
----
-
-## 待办
-
-- [ ] 手动触发渲染以验证日志输出格式（当前测试卡在第 4 张图，溢出分支未覆盖）
 
 ## 2026-07-01：修复 LLM 工具参数 schema 静默丢失
 

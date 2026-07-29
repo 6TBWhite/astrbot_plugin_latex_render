@@ -5,7 +5,7 @@
   <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，用户也可以通过命令查看模板列表并切换默认模板。</p>
   <p>
     <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
-    <a href="https://github.com/6TBWhite/astrbot_plugin_latex_render/releases"><img src="https://img.shields.io/badge/release-v1.0.3-7357D9?style=flat-square" alt="Release v1.0.3" /></a>
+    <a href="https://github.com/6TBWhite/astrbot_plugin_latex_render/releases"><img src="https://img.shields.io/badge/release-v1.0.4-7357D9?style=flat-square" alt="Release v1.0.4" /></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F855A?style=flat-square" alt="MIT License" /></a>
   </p>
@@ -25,7 +25,7 @@
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前稳定版本为 `1.0.3`，要求 AstrBot `>=4.26.3`。
+当前稳定版本为 `1.0.4`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
@@ -230,7 +230,7 @@ render_to_image(
 
 Playwright 会阻断 Google Fonts 请求，避免外部网络请求影响渲染稳定性。自定义模板若需要固定字体，请将 `.woff2` 等文件随插件部署，并通过本地路径引用；仅配置在线字体 URL 时会回退到后备系统字体。
 
-MathJax 使用仓库内的 `mathjax-tex-svg.js`，正常渲染无需连接 CDN。
+MathJax 使用仓库内的 `assets/mathjax-tex-svg.js`，正常渲染无需连接 CDN。
 
 ## 问题排查
 
@@ -251,7 +251,7 @@ AstrBot 更新后通常无需删除浏览器目录。该目录位于 `data/plugi
 
 - 确认 `enable_math = true`。
 - 使用受支持的分隔符：`$...$`、`$$...$$`、`\(...\)` 或 `\[...\]`。
-- 查看日志是否成功加载本地 `mathjax-tex-svg.js`。
+- 查看日志是否成功加载本地 `assets/mathjax-tex-svg.js`。
 - 公式不应放入代码块；代码块中的 `$...$` 会按普通代码保留。
 
 ### 图片底部被截断或渲染失败
@@ -265,15 +265,17 @@ AstrBot 更新后通常无需删除浏览器目录。该目录位于 `data/plugi
 
 ```text
 astrbot_plugin_latex_render/
-├── main.py                 生命周期、命令、LLM 工具与模板选择
-├── renderer.py             Playwright 浏览器复用、截图与 GIF 原型
-├── text_processing.py      Markdown、LaTeX 保护与换行处理
-├── template_manager.py     模板发现、读取与内置提示提取
+├── main.py                 AstrBot 入口、生命周期、命令与 LLM 工具
+├── core/
+│   ├── renderer.py         Playwright 浏览器复用、截图与 GIF 原型
+│   ├── text_processing.py  Markdown、LaTeX 保护与换行处理
+│   └── template_manager.py 模板发现、读取与内置提示提取
+├── assets/
+│   └── mathjax-tex-svg.js  离线 MathJax
 ├── templates/              classic / novel 模板
-├── mathjax-tex-svg.js      离线 MathJax
 ├── _conf_schema.json       AstrBot WebUI 配置定义
 ├── metadata.yaml           插件市场元数据
-└── tests/                  文本、模板与元数据回归测试
+└── tests/                  功能、命令、Agent 工具与 Chromium 回归测试
 ```
 
 ## 开发验证
@@ -286,7 +288,13 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
-完整渲染仍需在 AstrBot 中重载插件，并至少执行一次 `/测试`。单元测试不覆盖 Chromium 下载和消息平台图片发送链路。
+默认测试会跳过真实浏览器用例。发布前可设置以下环境变量，运行包含用户命令、Agent 工具和 Chromium 截图的完整测试：
+
+```bash
+ASTRBOT_LATEX_RENDER_INTEGRATION=1 python -m pytest -q
+```
+
+若 Chromium 安装在 AstrBot 插件数据目录，还需将 `PLAYWRIGHT_BROWSERS_PATH` 设置为该目录。适配器向实际消息平台发送图片的链路仍需在 AstrBot 中重载插件后至少执行一次 `/测试` 验证。
 
 ## 致谢与许可
 

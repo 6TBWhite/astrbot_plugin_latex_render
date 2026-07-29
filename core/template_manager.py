@@ -38,14 +38,25 @@ class TemplateManager:
             )
 
     def get_available_templates(self) -> List[str]:
-        """Return all template file names without extension."""
+        """Return readable HTML templates containing the content placeholder."""
         if not os.path.isdir(self.TEMPLATE_DIR):
             return []
 
         templates = set()
         for filename in os.listdir(self.TEMPLATE_DIR):
-            if filename.endswith(".html"):
-                templates.add(filename[:-5])
+            if not filename.endswith(".html"):
+                continue
+            filepath = os.path.join(self.TEMPLATE_DIR, filename)
+            try:
+                with open(filepath, "r", encoding="utf-8") as handle:
+                    if "{{content}}" in handle.read():
+                        templates.add(filename[:-5])
+                    else:
+                        logger.warning(
+                            f"[HTML渲染] 已忽略缺少 {{{{content}}}} 占位符的模板: {filepath}"
+                        )
+            except Exception as exc:
+                logger.warning(f"[HTML渲染] 已忽略无法读取的模板 {filepath}: {exc}")
         return sorted(templates)
 
     def require_available_templates(self) -> List[str]:
@@ -76,6 +87,9 @@ class TemplateManager:
                 content = handle.read()
         except Exception as exc:
             raise RuntimeError(f"读取模板失败: {template_name}: {exc}") from exc
+
+        if "{{content}}" not in content:
+            raise ValueError(f"模板缺少 {{{{content}}}} 占位符: {template_name}")
 
         return self.strip_builtin_prompt(content)
 

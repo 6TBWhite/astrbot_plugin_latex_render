@@ -12,7 +12,8 @@ from astrbot.api import logger
 
 # ==================== 本地字体映射 ====================
 
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ASSETS_DIR = os.path.join(_PLUGIN_ROOT, "assets")
 _FONT_MANIFEST: Dict[str, str] = {}  # URL -> 本地绝对路径
 _FONT_MANIFEST_LOADED = False
 
@@ -23,21 +24,23 @@ def _load_font_manifest():
     if _FONT_MANIFEST_LOADED:
         return
 
-    manifest_path = os.path.join(_PLUGIN_DIR, "fonts", "manifest.json")
+    manifest_path = os.path.join(_ASSETS_DIR, "fonts", "manifest.json")
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             # 转换为绝对路径
             for url, rel_path in raw.items():
-                abs_path = os.path.join(_PLUGIN_DIR, rel_path)
+                abs_path = os.path.join(_ASSETS_DIR, rel_path)
                 if os.path.exists(abs_path):
                     _FONT_MANIFEST[url] = abs_path
             logger.info(f"[HTML渲染] 已加载 {len(_FONT_MANIFEST)} 个本地字体映射")
         except Exception as e:
             logger.warning(f"[HTML渲染] 加载字体清单失败: {e}")
     else:
-        logger.debug("[HTML渲染] 未找到字体清单 fonts/manifest.json，将使用网络字体")
+        logger.debug(
+            "[HTML渲染] 未找到字体清单 assets/fonts/manifest.json，将使用系统字体"
+        )
 
     _FONT_MANIFEST_LOADED = True
 

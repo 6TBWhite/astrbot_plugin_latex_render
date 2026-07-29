@@ -16,15 +16,14 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import Image, Plain
 from astrbot.api.provider import ProviderRequest
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star
 from astrbot.core.agent.message import TextPart
 from astrbot.core.star.star_tools import StarTools
 
-from . import __version__
-from . import text_processing as _text_processing
-from .renderer import close_browser, html_to_image_playwright, init_browser
-from .template_manager import TemplateManager
-from .text_processing import markdown_to_html, nl2br, preserve_newlines
+from .core import text_processing as _text_processing
+from .core.renderer import close_browser, html_to_image_playwright, init_browser
+from .core.template_manager import TemplateManager
+from .core.text_processing import markdown_to_html, nl2br, preserve_newlines
 
 _PLUGIN_NAME = "astrbot_plugin_latex_render"
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,12 +47,6 @@ def _contains_math(content: str) -> bool:
     )
 
 
-@register(
-    _PLUGIN_NAME,
-    "6TBWhite & Para",
-    "将 Markdown、LaTeX 公式与长文本在本地渲染成图片，支持 LLM 工具调用和双模板。",
-    __version__,
-)
 class LatexRenderPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -246,8 +239,7 @@ class LatexRenderPlugin(Star):
             return html_content
 
         if getattr(self, "_mathjax_src", None) is None:
-            _plugin_dir = os.path.dirname(os.path.abspath(__file__))
-            _mathjax_path = os.path.join(_plugin_dir, "mathjax-tex-svg.js")
+            _mathjax_path = os.path.join(_PLUGIN_DIR, "assets", "mathjax-tex-svg.js")
             if os.path.exists(_mathjax_path):
                 try:
                     with open(_mathjax_path, encoding="utf-8") as _f:
@@ -839,9 +831,8 @@ body > * {{
         except Exception as e:
             yield event.plain_result(f"渲染失败：{e}")
             return
-        self._push_hidden_ctx(event, text)
-
         if image:
+            self._push_hidden_ctx(event, text)
             if isinstance(image, list):
                 yield event.chain_result(image)
             else:
@@ -907,7 +898,6 @@ body > * {{
     async def cmd_probe_gif(self, event: AstrMessageEvent):
         """诊断 GIF 渲染问题：截取多帧并保存为独立图片"""
         from playwright.async_api import async_playwright
-        from template_manager import TemplateManager
 
         html_content = TemplateManager.get_gif_test_content()
         # 移除 <render gif> 标签，只保留 HTML
@@ -933,15 +923,15 @@ body > * {{
                 )
                 await asyncio.sleep(1.0)
 
-                # 检查弹幕元素是否存在
-                danmu_count = await page.evaluate(
-                    "document.querySelectorAll('.danmu-line').length"
+                # 检查测试页中的动画元素是否存在
+                animated_count = await page.evaluate(
+                    "document.querySelectorAll('.track').length"
                 )
-                logger.info(f"[探针] 弹幕元素数量: {danmu_count}")
+                logger.info(f"[探针] 动画元素数量: {animated_count}")
 
-                # 检查弹幕元素的实际位置和样式
-                danmu_info = await page.evaluate("""() => {
-                    const items = document.querySelectorAll('.danmu-line');
+                # 检查动画元素的实际位置和样式
+                animated_info = await page.evaluate("""() => {
+                    const items = document.querySelectorAll('.track');
                     return Array.from(items).map((el, i) => {
                         const rect = el.getBoundingClientRect();
                         const style = getComputedStyle(el);
@@ -963,9 +953,9 @@ body > * {{
                     });
                 }""")
 
-                for info in danmu_info:
+                for info in animated_info:
                     logger.info(
-                        f"[探针] 弹幕#{info['index']}: "
+                        f"[探针] 动画元素#{info['index']}: "
                         f"text='{info['text']}' "
                         f"pos=({info['x']},{info['y']}) "
                         f"size={info['width']}x{info['height']} "
@@ -993,7 +983,7 @@ body > * {{
             # 发送 3 帧截图
             result_chain = [
                 Plain(
-                    f"🔍 探针结果：检测到 {danmu_count} 个弹幕元素\n详细信息请查看控制台日志\n\n以下是间隔1秒的3帧截图："
+                    f"🔍 探针结果：检测到 {animated_count} 个动画元素\n详细信息请查看控制台日志\n\n以下是间隔1秒的3帧截图："
                 )
             ]
             result_chain.extend(probe_images)
@@ -1055,9 +1045,8 @@ body > * {{
         except Exception as e:
             yield event.plain_result(f"渲染失败：{e}")
             return
-        self._push_hidden_ctx(event, text)
-
         if image:
+            self._push_hidden_ctx(event, text)
             chain = [Plain(f"🖼️ 模板预览: {template_name}")]
             if isinstance(image, list):
                 chain.extend(image)
@@ -1115,17 +1104,13 @@ body > * {{
 
         Args:
             content(string): 必填，不可为空。将要渲染成图片的完整文本内容，直接写 Markdown + LaTeX 公式。不要包裹 <render> 标签或代码块。
-            template(string): 可选。classic（讲题排版，默认）或 novel（小说风格）。不指定则使用用户默认模板。
+            template(string): 可选。已存在的模板名称，例如 classic 或 novel；不指定则使用用户默认模板。
         """
         if not content or not content.strip():
             yield "⚠️ 内容不能为空，请提供需要渲染的 Markdown 文本。"
             return
         user_id = self._get_user_id(event)
         tpl = template.strip() if template and template.strip() else None
-
-        # 原文暂存进隐藏上下文缓冲区，不进消息链（仅发图）
-        if content and self.config.get("enable_hidden_ctx_buffer", False):
-            self._push_hidden_ctx(event, content)
 
         try:
             image = await self._render_content(content, tpl, user_id, False)
@@ -1135,10 +1120,16 @@ body > * {{
             return
 
         if image:
-            if isinstance(image, list):
-                await event.send(event.chain_result(image))
-            else:
-                await event.send(event.chain_result([image]))
+            try:
+                if isinstance(image, list):
+                    await event.send(event.chain_result(image))
+                else:
+                    await event.send(event.chain_result([image]))
+            except Exception as e:
+                logger.error(f"[HTML渲染] 图片已生成但发送失败: {e}")
+                yield "图片已生成，但发送失败，请检查消息平台连接后重试。"
+                return
+            self._push_hidden_ctx(event, content)
             yield "图片已渲染并发送给用户。可对图片内容进行简要解说。"
         else:
             yield "渲染失败，请检查内容格式后重试。"
@@ -1152,9 +1143,6 @@ body > * {{
         仅对超长推导链（>20轮）调试有用，普通会话建议关闭。
         """
         if not self.config.get("enable_hidden_ctx_buffer", False):
-            logger.warning(
-                "[实验性] 隐藏上下文缓冲区已关闭（enable_hidden_ctx_buffer=False），不再暂存和注入"
-            )
             return
         if not content or not content.strip():
             return

@@ -1,4 +1,4 @@
-from text_processing import contains_math, markdown_to_html
+from core.text_processing import contains_math, markdown_to_html
 
 
 def test_math_detection_ignores_code_and_finds_formulae() -> None:
@@ -16,3 +16,15 @@ def test_markdown_preserves_math_and_renders_table() -> None:
     assert "<table>" in rendered
     assert "astr-math-inline" in rendered
     assert r"\(a^2+b^2=c^2\)" in rendered
+
+
+def test_advertised_markdown_constructs_are_rendered() -> None:
+    rendered = markdown_to_html(
+        "# 标题\n\n- 列表项\n\n> 引用\n\n~~删除线~~\n\n```python\nprint('code')\n```"
+    )
+
+    assert "<h1>标题</h1>" in rendered
+    assert "<li>列表项</li>" in rendered
+    assert "<blockquote>" in rendered
+    assert "<del>删除线</del>" in rendered
+    assert "<code" in rendered

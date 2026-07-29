@@ -33,6 +33,25 @@ def test_commands_use_supported_alias_keyword() -> None:
     assert "alias" in aliases
 
 
+def test_plugin_does_not_use_deprecated_register_decorator() -> None:
+    tree = _main_tree()
+    imported_names = {
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    decorators = [
+        decorator
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "LatexRenderPlugin"
+        for decorator in node.decorator_list
+    ]
+
+    assert "register" not in imported_names
+    assert decorators == []
+
+
 def test_llm_tool_docstring_declares_all_parameters() -> None:
     for node in ast.walk(_main_tree()):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
