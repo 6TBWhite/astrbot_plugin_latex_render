@@ -61,10 +61,14 @@ def test_llm_tool_docstring_declares_all_parameters() -> None:
             assert "Args:" in docstring
             assert "content(string):" in docstring
             assert "template(string):" in docstring
+            assert "layout(string):" in docstring
+            assert "调用前必须" not in docstring
+            assert "否则会报错" not in docstring
             parsed = docstring_parser.parse(docstring)
             assert [(param.arg_name, param.type_name) for param in parsed.params] == [
                 ("content", "string"),
                 ("template", "string"),
+                ("layout", "string"),
             ]
             return
 

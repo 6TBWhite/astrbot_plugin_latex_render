@@ -1,0 +1,126 @@
+<!-- BUILTIN_PROMPT
+这是 paper 模板：纯白 A4 固定纸张，适合课程论文、技术报告、推导稿和可打印 Markdown。
+只使用标准 Markdown 与 LaTeX，不要使用 q/inner/act/scene/aside 或原始 HTML/CSS。
+使用清晰的标题层级；避免把整篇内容塞进单个超长代码块或表格单元格。
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            width: 794px;
+            min-width: 794px;
+            max-width: 794px;
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
+        }
+        body {
+            color: #111111;
+            font-family: "Source Han Serif SC", "Noto Serif CJK SC",
+                         "Songti SC", "SimSun", serif;
+        }
+        .paper-flow {
+            width: 794px;
+            background: #ffffff;
+        }
+        .content {
+            width: 100%;
+            padding: 0 var(--paper-margin-x, 76px);
+            font-size: var(--paper-font-size, 16px);
+            line-height: var(--paper-line-height, 1.75);
+            overflow-wrap: break-word;
+            word-break: normal;
+        }
+        .content > :first-child { margin-top: 0; }
+        .content > :last-child { margin-bottom: 0; }
+        h1, h2, h3, h4, h5, h6 {
+            color: #111111;
+            font-family: "Source Han Sans SC", "Noto Sans CJK SC",
+                         "Microsoft YaHei", sans-serif;
+            font-weight: 700;
+            line-height: 1.35;
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        h1 {
+            margin: 0 0 28px;
+            font-size: var(--paper-h1-size, 24px);
+            text-align: center;
+        }
+        h2 {
+            margin: 30px 0 16px;
+            font-size: var(--paper-h2-size, 20px);
+        }
+        h3 {
+            margin: 24px 0 12px;
+            font-size: var(--paper-h3-size, 18px);
+        }
+        h4, h5, h6 { margin: 20px 0 10px; font-size: 16px; }
+        p {
+            margin: 0 0 14px;
+            text-align: justify;
+            text-indent: 2em;
+            orphans: 2;
+            widows: 2;
+        }
+        h1 + p, h2 + p, h3 + p,
+        li p, blockquote p, td p, th p { text-indent: 0; }
+        ul, ol { margin: 0 0 16px 2em; padding: 0; }
+        li { margin: 4px 0; }
+        blockquote {
+            margin: 16px 0;
+            padding: 8px 16px;
+            border-left: 3px solid #777777;
+            color: #333333;
+            background: #f7f7f7;
+        }
+        table {
+            width: 100%;
+            margin: 18px 0;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 14px;
+            break-inside: avoid;
+        }
+        th, td {
+            border: 1px solid #555555;
+            padding: 7px 9px;
+            vertical-align: top;
+            overflow-wrap: anywhere;
+        }
+        th {
+            background: #f1f1f1;
+            font-family: "Source Han Sans SC", "Noto Sans CJK SC",
+                         "Microsoft YaHei", sans-serif;
+            font-weight: 600;
+        }
+        pre {
+            margin: 16px 0;
+            padding: 14px 16px;
+            border: 1px solid #bdbdbd;
+            background: #f6f6f6;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            break-inside: avoid;
+        }
+        code {
+            font-family: "Cascadia Mono", "Consolas", monospace;
+            font-size: 0.9em;
+        }
+        hr { margin: 24px 0; border: 0; border-top: 1px solid #777777; }
+        a { color: #111111; text-decoration: underline; }
+        .astr-math-block {
+            break-inside: avoid;
+            margin: 18px 0 !important;
+        }
+    </style>
+</head>
+<body data-astr-page-size="a4">
+    <main class="paper-flow">
+        <div class="content">{{content}}</div>
+    </main>
+</body>
+</html>

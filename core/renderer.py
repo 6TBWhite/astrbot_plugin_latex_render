@@ -10,6 +10,8 @@ from typing import Dict, Optional
 
 from astrbot.api import logger
 
+from .models import BrowserRenderResult
+
 # ==================== 本地字体映射 ====================
 
 _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,7 +60,7 @@ def _get_font_mime(path: str) -> str:
 
 # GIF 合成支持
 try:
-    from PIL import Image as PILImage, ImageChops
+    from PIL import Image as PILImage, ImageChops, ImageDraw
 
     GIF_AVAILABLE = True
 except ImportError:
@@ -74,6 +76,9 @@ _playwright_instance = None
 _browser_instance = None
 _browser_lock = asyncio.Lock()
 _CAPTURE_BOTTOM_PADDING = 24
+_PAGINATION_BOTTOM_BUFFER = 40
+_last_browser_error = ""
+_last_render_seconds = 0.0
 
 
 async def init_browser():
@@ -220,6 +225,321 @@ async def _prepare_page_for_capture(page, width: int) -> int:
     full_height = await _stabilize_layout(page)
     await page.set_viewport_size({"width": width, "height": full_height})
     return await _stabilize_layout(page)
+
+
+async def _install_network_policy(page, allow_remote_assets: bool = False) -> None:
+    """Keep rendering offline unless an administrator explicitly opts in."""
+
+    async def _route(route):
+        url = route.request.url
+        scheme = url.split(":", 1)[0].lower() if ":" in url else ""
+        if scheme in {"data", "blob", "about"}:
+            await route.continue_()
+            return
+        if allow_remote_assets and scheme in {"http", "https"}:
+            await route.continue_()
+            return
+        await route.abort()
+
+    await page.route("**/*", _route)
+
+
+_HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+
+
+def _should_keep_with_next(current: dict, following: dict) -> bool:
+    """Keep headings and short lead-ins with the block they introduce."""
+
+    current_tag = str(current.get("tag", "")).lower()
+    following_tag = str(following.get("tag", "")).lower()
+    if current_tag in _HEADING_TAGS:
+        return following_tag not in _HEADING_TAGS
+    if current_tag != "p" or not bool(following.get("keep_target", False)):
+        return False
+    return (
+        0 < int(current.get("text_length", 0)) <= 120
+        and int(current.get("height", 0)) <= 240
+    )
+
+
+def _group_pagination_blocks(blocks: list[dict]) -> list[dict]:
+    """Build atomic pagination groups without modifying the rendered DOM."""
+
+    groups: list[dict] = []
+    index = 0
+    while index < len(blocks):
+        first = blocks[index]
+        last_index = index
+        while last_index + 1 < len(blocks) and _should_keep_with_next(
+            blocks[last_index], blocks[last_index + 1]
+        ):
+            last_index += 1
+        last = blocks[last_index]
+        groups.append(
+            {
+                "top": int(first["top"]),
+                "bottom": int(last["bottom"]),
+                "breakable": str(last.get("tag", "")).lower() not in _HEADING_TAGS,
+            }
+        )
+        index = last_index + 1
+    return groups
+
+
+async def _calculate_page_slices(
+    page,
+    full_height: int,
+    max_page_height: int,
+    max_pages: int,
+) -> tuple[list[tuple[int, int]], set[int]]:
+    """Find page breaks near semantic block boundaries."""
+
+    if full_height <= max_page_height:
+        return [(0, full_height)], set()
+
+    if full_height > max_page_height * max_pages:
+        raise ValueError(
+            f"页面高度 {full_height}px 超过分页上限 "
+            f"{max_page_height * max_pages}px（最多 {max_pages} 页）"
+        )
+
+    blocks = await page.evaluate(
+        """() => {
+            const root = document.querySelector('.content') || document.body;
+            if (!root) return [];
+            const children = Array.from(root.children);
+            return children.map((el) => {
+                const rect = el.getBoundingClientRect();
+                return {
+                    top: Math.max(0, Math.floor(rect.top + window.scrollY)),
+                    bottom: Math.max(0, Math.ceil(rect.bottom + window.scrollY)),
+                    tag: el.tagName.toLowerCase(),
+                    height: Math.max(0, Math.ceil(rect.height)),
+                    text_length: (el.textContent || "").replace(/\\s+/g, " ").trim().length,
+                    keep_target: (
+                        ["pre", "table", "ul", "ol", "blockquote", "figure"].includes(
+                            el.tagName.toLowerCase()
+                        )
+                        || el.classList.contains("astr-math-block")
+                        || Boolean(el.querySelector('mjx-container[display="true"]'))
+                    ),
+                };
+            }).filter(item => item.bottom > item.top);
+        }"""
+    )
+    groups = _group_pagination_blocks(blocks)
+
+    slices: list[tuple[int, int]] = []
+    hard_breaks: set[int] = set()
+    start = 0
+    minimum_fill = max(320, int(max_page_height * 0.45))
+    while start < full_height:
+        target = min(full_height, start + max_page_height)
+        if target >= full_height:
+            slices.append((start, full_height))
+            break
+
+        break_at = 0
+        for group in groups:
+            top = int(group["top"])
+            bottom = int(group["bottom"])
+            if (
+                bool(group.get("breakable", True))
+                and start + minimum_fill <= bottom <= target
+            ):
+                break_at = max(break_at, bottom)
+            elif (
+                not break_at
+                and start + minimum_fill <= top <= target
+                and bottom > target
+            ):
+                break_at = top
+
+        hard_split = break_at <= start
+        end = break_at if not hard_split else target
+        slices.append((start, end))
+        if hard_split:
+            hard_breaks.add(len(slices))
+        start = end
+
+    if len(slices) > max_pages:
+        raise ValueError(f"分页结果为 {len(slices)} 页，超过最多 {max_pages} 页")
+    return slices, hard_breaks
+
+
+def _add_page_number(path: str, page_number: int, page_count: int) -> None:
+    if not GIF_AVAILABLE or page_count <= 1:
+        return
+    try:
+        with PILImage.open(path) as source:
+            image = source.convert("RGB")
+            draw = ImageDraw.Draw(image)
+            label = f"{page_number} / {page_count}"
+            bbox = draw.textbbox((0, 0), label)
+            width = bbox[2] - bbox[0]
+            height = bbox[3] - bbox[1]
+            x = max(8, image.width - width - 22)
+            y = max(8, image.height - height - 18)
+            draw.rounded_rectangle(
+                (x - 8, y - 5, x + width + 8, y + height + 5),
+                radius=6,
+                fill=(255, 255, 255),
+                outline=(190, 190, 190),
+            )
+            draw.text((x, y), label, fill=(70, 70, 70))
+            image.save(path, "JPEG", quality=90, optimize=True)
+    except Exception as exc:
+        logger.warning(f"[HTML渲染] 添加页码失败: {exc}")
+
+
+def _add_continuation_marker(
+    path: str, continues_from_previous: bool, continues_to_next: bool
+) -> None:
+    if not GIF_AVAILABLE or not (continues_from_previous or continues_to_next):
+        return
+    try:
+        with PILImage.open(path) as source:
+            image = source.convert("RGB")
+            draw = ImageDraw.Draw(image)
+            if continues_from_previous:
+                draw.rounded_rectangle(
+                    (14, 12, 124, 36),
+                    radius=5,
+                    fill=(255, 255, 255),
+                    outline=(190, 190, 190),
+                )
+                draw.text((22, 18), "continued", fill=(80, 80, 80))
+            if continues_to_next:
+                y = max(12, image.height - 38)
+                draw.rounded_rectangle(
+                    (14, y, 132, y + 24),
+                    radius=5,
+                    fill=(255, 255, 255),
+                    outline=(190, 190, 190),
+                )
+                draw.text((22, y + 6), "continues...", fill=(80, 80, 80))
+            image.save(path, "JPEG", quality=90, optimize=True)
+    except Exception as exc:
+        logger.warning(f"[HTML渲染] 添加续页标记失败: {exc}")
+
+
+def _append_bottom_buffer(path: str, padding_css: int, scale: int) -> None:
+    """Extend a paginated image with a clean edge-matched bottom buffer."""
+
+    if not GIF_AVAILABLE or padding_css <= 0:
+        return
+    padding_pixels = max(1, int(padding_css * scale))
+    try:
+        with PILImage.open(path) as source:
+            image = source.convert("RGB")
+        sample_height = min(8, image.height)
+        edge = image.crop((0, image.height - sample_height, image.width, image.height))
+        edge = edge.resize((image.width, 1), PILImage.Resampling.BOX)
+        edge = edge.resize((image.width, padding_pixels), PILImage.Resampling.NEAREST)
+        canvas = PILImage.new(
+            "RGB", (image.width, image.height + padding_pixels), "white"
+        )
+        canvas.paste(image, (0, 0))
+        canvas.paste(edge, (0, image.height))
+        canvas.save(path, "JPEG", quality=92, optimize=True)
+    except Exception as exc:
+        logger.warning(f"[HTML渲染] 添加分页底部缓冲失败: {exc}")
+
+
+def _pad_fixed_canvas(
+    path: str,
+    page_width: int,
+    page_height: int,
+    top_margin: int,
+    scale: int,
+) -> None:
+    """Place a semantic page slice on a same-size white paper canvas."""
+
+    if not GIF_AVAILABLE:
+        raise ValueError("固定纸张分页需要 Pillow")
+    pixel_width = max(1, int(page_width * scale))
+    pixel_height = max(1, int(page_height * scale))
+    y = max(0, int(top_margin * scale))
+    with PILImage.open(path) as source:
+        slice_image = source.convert("RGB")
+        if slice_image.width != pixel_width:
+            ratio = pixel_width / max(1, slice_image.width)
+            slice_image = slice_image.resize(
+                (pixel_width, max(1, int(slice_image.height * ratio))),
+                PILImage.Resampling.LANCZOS,
+            )
+        available_height = max(1, pixel_height - y)
+        if slice_image.height > available_height:
+            slice_image = slice_image.crop((0, 0, slice_image.width, available_height))
+        canvas = PILImage.new("RGB", (pixel_width, pixel_height), "white")
+        canvas.paste(slice_image, (0, y))
+        canvas.save(path, "JPEG", quality=92, optimize=True)
+
+
+def _enforce_image_budget(path: str, max_output_bytes: int) -> str | None:
+    """Compress an oversized JPEG and report a warning when quality is reduced."""
+
+    if max_output_bytes <= 0 or not os.path.isfile(path):
+        return None
+    if os.path.getsize(path) <= max_output_bytes:
+        return None
+    if not GIF_AVAILABLE:
+        raise ValueError("图片超过体积上限，且 Pillow 不可用，无法自动压缩")
+
+    with PILImage.open(path) as source:
+        image = source.convert("RGB")
+        for quality in (84, 78, 72, 66, 60):
+            image.save(path, "JPEG", quality=quality, optimize=True)
+            if os.path.getsize(path) <= max_output_bytes:
+                return f"图片超过体积预算，已将 JPEG 质量调整为 {quality}"
+
+        while (
+            os.path.getsize(path) > max_output_bytes
+            and image.width > 480
+            and image.height > 480
+        ):
+            image = image.resize(
+                (max(1, int(image.width * 0.85)), max(1, int(image.height * 0.85))),
+                PILImage.Resampling.LANCZOS,
+            )
+            image.save(path, "JPEG", quality=66, optimize=True)
+
+    if os.path.getsize(path) > max_output_bytes:
+        raise ValueError(
+            f"图片压缩后仍有 {os.path.getsize(path)} 字节，超过上限 {max_output_bytes}"
+        )
+    return "图片超过体积预算，已自动降低分辨率"
+
+
+def _cleanup_output_family(output_image_path: str) -> None:
+    directory = os.path.dirname(output_image_path) or "."
+    base = os.path.splitext(os.path.basename(output_image_path))[0]
+    try:
+        for name in os.listdir(directory):
+            stem, extension = os.path.splitext(name)
+            if extension.lower() not in {".jpg", ".jpeg", ".gif", ".png"}:
+                continue
+            if stem == base or stem.startswith(f"{base}_p"):
+                try:
+                    os.remove(os.path.join(directory, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def get_renderer_status() -> dict:
+    connected = False
+    if _browser_instance is not None:
+        try:
+            connected = bool(_browser_instance.is_connected())
+        except Exception:
+            connected = False
+    return {
+        "browser_connected": connected,
+        "last_browser_error": _last_browser_error,
+        "last_render_seconds": round(_last_render_seconds, 3),
+    }
 
 
 async def _detect_animated_region(
@@ -385,7 +705,14 @@ async def html_to_image_playwright(
     is_gif: bool = False,
     duration: float = 3.0,
     fps: int = 15,
-) -> bool:
+    layout: str = "auto",
+    max_page_height: int = 3200,
+    max_pages: int = 8,
+    max_output_bytes: int = 6 * 1024 * 1024,
+    show_page_numbers: bool = True,
+    allow_remote_assets: bool = False,
+    fixed_page_size: dict | None = None,
+) -> BrowserRenderResult:
     """
     使用 Playwright 将 HTML 内容渲染成图片。
     复用浏览器实例，每次只创建新页面。
@@ -393,6 +720,7 @@ async def html_to_image_playwright(
     """
     import time as _time
 
+    global _last_browser_error, _last_render_seconds
     _t_start = _time.perf_counter()
 
     page = None
@@ -409,6 +737,8 @@ async def html_to_image_playwright(
                 is_gif,
                 duration,
                 fps,
+                max_output_bytes=max_output_bytes,
+                allow_remote_assets=allow_remote_assets,
             )
 
         context = await browser.new_context(
@@ -416,6 +746,9 @@ async def html_to_image_playwright(
             viewport={"width": width, "height": 800},
         )
         page = await context.new_page()
+        page.set_default_timeout(15_000)
+
+        await _install_network_policy(page, allow_remote_assets)
 
         # ===== 字体路由映射：将 Google Fonts 请求重定向到本地文件 =====
         _load_font_manifest()
@@ -460,14 +793,105 @@ async def html_to_image_playwright(
             f"[性能] 页面创建: {_t_page - _t_start:.3f}s, 内容加载: {_t_content - _t_page:.3f}s"
         )
 
+        output_paths: list[str] = []
+        warnings: list[str] = []
+
         if not is_gif:
-            # 使用 JPEG 格式：体积远小于 PNG，截图速度更快
-            await page.screenshot(
-                path=output_image_path,
-                full_page=True,
-                type="jpeg",
-                quality=92,
+            normalized_layout = str(layout or "auto").strip().lower()
+            if normalized_layout not in {"auto", "single", "paged"}:
+                normalized_layout = "auto"
+
+            if fixed_page_size:
+                normalized_layout = "paged"
+                max_page_height = int(
+                    fixed_page_size.get("content_height", max_page_height)
+                )
+            elif (
+                normalized_layout == "single"
+                and full_height > max_page_height * max_pages
+            ):
+                raise ValueError(
+                    f"单页高度 {full_height}px 超过绝对上限 "
+                    f"{max_page_height * max_pages}px"
+                )
+
+            should_paginate = normalized_layout == "paged" or (
+                normalized_layout == "auto" and full_height > max_page_height
             )
+            if should_paginate:
+                bottom_buffer = (
+                    0
+                    if fixed_page_size
+                    else min(
+                        _PAGINATION_BOTTOM_BUFFER,
+                        max(0, int(max_page_height) - 400),
+                    )
+                )
+                slice_height_budget = max(400, int(max_page_height) - bottom_buffer)
+                slices, hard_breaks = await _calculate_page_slices(
+                    page,
+                    full_height,
+                    slice_height_budget,
+                    max(1, int(max_pages)),
+                )
+                base, extension = os.path.splitext(output_image_path)
+                extension = extension or ".jpg"
+                for index, (start, end) in enumerate(slices, start=1):
+                    path = (
+                        output_image_path
+                        if index == 1
+                        else f"{base}_p{index}{extension}"
+                    )
+                    await page.screenshot(
+                        path=path,
+                        clip={
+                            "x": 0,
+                            "y": start,
+                            "width": width,
+                            "height": end - start,
+                        },
+                        type="jpeg",
+                        quality=92,
+                    )
+                    output_paths.append(path)
+
+                if fixed_page_size:
+                    for path in output_paths:
+                        _pad_fixed_canvas(
+                            path,
+                            int(fixed_page_size.get("width", width)),
+                            int(fixed_page_size.get("height", 1123)),
+                            int(fixed_page_size.get("top_margin", 76)),
+                            scale,
+                        )
+                elif len(output_paths) > 1:
+                    for path in output_paths:
+                        _append_bottom_buffer(path, bottom_buffer, scale)
+
+                for index, path in enumerate(output_paths, start=1):
+                    _add_continuation_marker(
+                        path,
+                        continues_from_previous=(index - 1) in hard_breaks,
+                        continues_to_next=index in hard_breaks,
+                    )
+
+                if show_page_numbers and len(output_paths) > 1:
+                    for index, path in enumerate(output_paths, start=1):
+                        _add_page_number(path, index, len(output_paths))
+            else:
+                await page.screenshot(
+                    path=output_image_path,
+                    full_page=True,
+                    type="jpeg",
+                    quality=92,
+                )
+                output_paths.append(output_image_path)
+
+            for path in output_paths:
+                budget_warning = _enforce_image_budget(path, max_output_bytes)
+                if budget_warning and budget_warning not in warnings:
+                    warnings.append(budget_warning)
+
             _t_end = _time.perf_counter()
             logger.info(f"[性能] 静态渲染总耗时: {_t_end - _t_start:.3f}s")
         else:
@@ -559,9 +983,29 @@ async def html_to_image_playwright(
 
             _t_end = _time.perf_counter()
             logger.info(f"[性能] GIF渲染总耗时: {_t_end - _t_start:.3f}s")
+            if os.path.exists(output_image_path):
+                output_paths.append(output_image_path)
+            gif_path = os.path.splitext(output_image_path)[0] + ".gif"
+            if os.path.exists(gif_path):
+                output_paths.append(gif_path)
 
-        return True
+        _last_browser_error = ""
+        _last_render_seconds = _t_end - _t_start
+        return BrowserRenderResult(
+            success=True,
+            paths=output_paths,
+            warnings=warnings,
+            metrics={
+                "duration_seconds": round(_last_render_seconds, 3),
+                "page_count": len(output_paths),
+                "content_height": full_height,
+                "layout": layout,
+            },
+        )
 
+    except asyncio.CancelledError:
+        _cleanup_output_family(output_image_path)
+        raise
     except Exception as e:
         logger.error(f"Playwright 渲染失败: {e}")
         import traceback
@@ -571,7 +1015,20 @@ async def html_to_image_playwright(
         # 浏览器可能已崩溃，重置实例
         global _browser_instance
         _browser_instance = None
-        return False
+        _cleanup_output_family(output_image_path)
+        _last_browser_error = str(e)
+        _last_render_seconds = _time.perf_counter() - _t_start
+        error_code = (
+            "resource_limit"
+            if isinstance(e, ValueError) and ("上限" in str(e) or "超过" in str(e))
+            else "browser_error"
+        )
+        return BrowserRenderResult(
+            success=False,
+            error_code=error_code,
+            error_message=str(e),
+            metrics={"duration_seconds": round(_last_render_seconds, 3)},
+        )
 
     finally:
         # 只关闭 context/page，不关闭浏览器
@@ -590,7 +1047,9 @@ async def _fallback_render(
     is_gif: bool,
     duration: float,
     fps: int,
-) -> bool:
+    max_output_bytes: int = 6 * 1024 * 1024,
+    allow_remote_assets: bool = False,
+) -> BrowserRenderResult:
     """回退到独立浏览器模式（浏览器池不可用时）"""
     try:
         from playwright.async_api import async_playwright
@@ -602,12 +1061,25 @@ async def _fallback_render(
                 viewport={"width": width, "height": 800},
             )
             page = await context.new_page()
+            await _install_network_policy(page, allow_remote_assets)
             await page.set_content(html_content, wait_until="domcontentloaded")
             await _prepare_page_for_capture(page, width)
-            await page.screenshot(path=output_image_path, full_page=True)
+            await page.screenshot(
+                path=output_image_path, full_page=True, type="jpeg", quality=92
+            )
+            warning = _enforce_image_budget(output_image_path, max_output_bytes)
             await browser.close()
             logger.info("[HTML渲染] 回退模式渲染完成（仅静态图）")
-            return True
+            return BrowserRenderResult(
+                success=True,
+                paths=[output_image_path],
+                warnings=[warning] if warning else [],
+                metrics={"fallback": True, "page_count": 1},
+            )
     except Exception as e:
         logger.error(f"[HTML渲染] 回退渲染也失败: {e}")
-        return False
+        return BrowserRenderResult(
+            success=False,
+            error_code="browser_error",
+            error_message=str(e),
+        )

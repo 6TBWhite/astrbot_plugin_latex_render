@@ -50,12 +50,21 @@ def plugin(plugin_main, tmp_path):
     instance.template_mgr = plugin_main.TemplateManager(str(PLUGIN_ROOT / "templates"))
     instance.template_mgr.update_template_id_map()
     instance.user_default_template = {}
+    instance.user_preferences = {}
+    instance.PREFERENCES_PATH = str(tmp_path / "preferences.json")
     instance._hidden_ctx_buffer = {}
     instance._bg_asset_cache = {}
     instance._bg_image_size = None
     instance._bg_round_robin_index = 0
     instance.gif_duration = 3.0
     instance.gif_fps = 15
+    instance._active_renders = 0
+    instance._queued_renders = 0
+    instance._render_semaphore_state = None
+    instance._last_render_metrics = {}
+    instance._last_render_error = {}
+    instance._browser_failure_count = 0
+    instance._browser_cooldown_until = 0.0
     instance._schedule_delete = lambda *paths: None
     return instance
 

@@ -7,6 +7,8 @@ from typing import List, Tuple
 
 from astrbot.api import logger
 
+from .security import sanitize_html_fragment
+
 # ==================== Markdown 渲染支持 ====================
 
 _markdown_renderer = None
@@ -259,8 +261,8 @@ def nl2br(html: str) -> str:
 # ==================== Markdown / 表格 转换 ====================
 
 
-def markdown_to_html(text: str) -> str:
-    """将 Markdown 转换为 HTML"""
+def markdown_to_html(text: str, safe: bool = True) -> str:
+    """将 Markdown 转换为 HTML；默认移除可执行或可嵌入的危险标签。"""
     if not MARKDOWN_AVAILABLE or _markdown_renderer is None:
         return preserve_newlines(text)
 
@@ -271,7 +273,7 @@ def markdown_to_html(text: str) -> str:
         logger.debug(
             f"[Markdown] 渲染成功，输入长度: {len(text)}, 输出长度: {len(html)}"
         )
-        return html
+        return sanitize_html_fragment(html) if safe else html
     except Exception as e:
         logger.error(f"Markdown 渲染失败: {e}")
         import traceback

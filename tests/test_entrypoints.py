@@ -161,7 +161,7 @@ def test_hidden_context_only_records_successful_render(
         collect_results(plugin.render_to_image_tool(event, content="失败内容"))
     )
 
-    assert failed_results == ["渲染失败，请检查内容格式后重试。"]
+    assert failed_results == ["渲染失败：浏览器未生成图片。"]
     assert plugin._hidden_ctx_buffer == {}
 
     plugin._render_content = AsyncMock(return_value=object())
@@ -190,3 +190,18 @@ def test_hidden_context_is_injected_per_conversation(plugin, fake_event_type) ->
     assert len(first_request.extra_user_content_parts) == 1
     assert "仅属于第一个会话" in first_request.extra_user_content_parts[0].text
     assert second_request.extra_user_content_parts == []
+
+
+def test_template_prompt_injection_is_compact(plugin, fake_event_type) -> None:
+    plugin.config["inject_template_prompts"] = True
+    request = SimpleNamespace(extra_user_content_parts=[])
+
+    asyncio.run(plugin.on_llm_req(fake_event_type(), request))
+
+    assert len(request.extra_user_content_parts) == 1
+    prompt = request.extra_user_content_parts[0].text
+    assert "classic：" in prompt
+    assert "paper：" in prompt
+    assert "custom：" in prompt
+    assert "novel" not in prompt
+    assert "用户未指定样式时省略 template" in prompt

@@ -17,6 +17,13 @@
         "default": 2,
         "hint": "倍数越高越清晰，建议 2-3"
     },
+    "default_layout": {
+        "type": "string",
+        "description": "默认分页布局",
+        "default": "auto",
+        "options": ["auto", "single"],
+        "hint": "auto 超过单页高度后自动分页；single 输出单张长图；固定 A4 由 Paper 模板决定"
+    },
     "enable_markdown": {
         "type": "bool",
         "description": "启用 Markdown 渲染",
@@ -28,6 +35,72 @@
         "description": "启用 LaTeX 数学公式渲染",
         "default": true,
         "hint": "支持 $...$、$$...$$、\\(...\\)、\\[...\\] 以及部分 begin/end 环境"
+    },
+    "trusted_html_mode": {
+        "type": "bool",
+        "description": "可信 HTML/CSS 模式",
+        "default": false,
+        "hint": "仅私人部署使用。关闭时会移除脚本、样式、iframe 与危险属性"
+    },
+    "allow_remote_assets": {
+        "type": "bool",
+        "description": "可信模式允许远程资源",
+        "default": false,
+        "hint": "仅 trusted_html_mode 同时开启时生效；公开机器人不建议开启"
+    },
+    "max_input_chars": {
+        "type": "int",
+        "description": "单次最大输入字符数",
+        "default": 50000,
+        "hint": "超出后拒绝渲染，防止单个任务耗尽内存"
+    },
+    "render_timeout_seconds": {
+        "type": "float",
+        "description": "渲染与排队超时（秒）",
+        "default": 30,
+        "hint": "建议 20-60 秒"
+    },
+    "max_page_height": {
+        "type": "int",
+        "description": "自动分页高度（CSS 像素）",
+        "default": 3200,
+        "hint": "auto 布局按此高度在语义块边界分页；普通聊天建议 2400-4000，默认 3200；固定 A4 模板不受影响"
+    },
+    "max_pages": {
+        "type": "int",
+        "description": "单次最多页数",
+        "default": 8,
+        "hint": "超过总高度预算时拒绝渲染"
+    },
+    "max_output_bytes": {
+        "type": "int",
+        "description": "单张图片最大字节数",
+        "default": 6291456,
+        "hint": "默认 6 MiB；超出时自动降低 JPEG 质量或分辨率"
+    },
+    "max_concurrent_renders": {
+        "type": "int",
+        "description": "最大并发渲染数",
+        "default": 2,
+        "hint": "公开机器人建议 1-3"
+    },
+    "max_queue_size": {
+        "type": "int",
+        "description": "最大等待任务数",
+        "default": 8,
+        "hint": "队列满时立即提示用户稍后重试"
+    },
+    "show_page_numbers": {
+        "type": "bool",
+        "description": "多页图片显示页码",
+        "default": true,
+        "hint": "在每页右下角显示当前页/总页数"
+    },
+    "browser_failure_cooldown_seconds": {
+        "type": "float",
+        "description": "浏览器连续失败冷却时间（秒）",
+        "default": 30,
+        "hint": "失败重试一次后进入冷却，避免反复拉起 Chromium"
     },
 
     "classic_body_padding": {
@@ -78,11 +151,79 @@
         "default": 23,
         "hint": "像素值"
     },
+    "paper_margin_x": {
+        "type": "int",
+        "description": "paper A4 左右页边距",
+        "default": 76,
+        "hint": "CSS 像素；76px 约等于 25.4mm"
+    },
+    "paper_margin_y": {
+        "type": "int",
+        "description": "paper A4 上下页边距",
+        "default": 76,
+        "hint": "CSS 像素；每张输出仍保持严格 A4 比例"
+    },
+    "paper_font_size": {
+        "type": "int",
+        "description": "paper 正文字号",
+        "default": 16,
+        "hint": "16px 约等于 12pt / 中文小四"
+    },
+    "paper_line_height": {
+        "type": "float",
+        "description": "paper 正文行高",
+        "default": 1.75,
+        "hint": "不同学校或期刊标准不同，可按要求调整"
+    },
+    "paper_h1_size": {
+        "type": "int",
+        "description": "paper 一级标题字号",
+        "default": 24,
+        "hint": "像素值"
+    },
+    "paper_h2_size": {
+        "type": "int",
+        "description": "paper 二级标题字号",
+        "default": 20,
+        "hint": "像素值"
+    },
+    "paper_h3_size": {
+        "type": "int",
+        "description": "paper 三级标题字号",
+        "default": 18,
+        "hint": "像素值"
+    },
+    "background_image": {
+        "type": "string",
+        "description": "管理员背景素材",
+        "default": "",
+        "hint": "仅发现 assets/backgrounds/ 中的图片；paper 模板始终保持纯白"
+    },
+    "background_image_strategy": {
+        "type": "string",
+        "description": "背景选择策略",
+        "default": "fixed",
+        "options": ["fixed", "round_robin", "random"],
+        "hint": "固定、轮换或随机选择管理员背景素材"
+    },
+    "background_render_mode": {
+        "type": "string",
+        "description": "背景渲染模式",
+        "default": "ambient",
+        "options": ["ambient", "watermark"],
+        "hint": "ambient 为氛围背景，watermark 为内容水印"
+    },
+    "background_opacity": {
+        "type": "float",
+        "description": "背景透明度",
+        "default": 0.22,
+        "hint": "0-1，水印模式建议 0.10-0.20"
+    },
     "inject_template_prompts": {
         "type": "bool",
-        "description": "注入模板专属指令",
+        "description": "注入精简模板说明",
         "default": false,
-        "hint": "在 LLM 请求时注入当前模板（classic / novel）的格式说明。默认关闭，避免干扰对话上下文"
+        "hint": "在 LLM 请求中提供 classic、paper 与 custom 的简要用途。默认关闭，避免占用对话上下文"
     },
     "enable_hidden_ctx_buffer": {
         "label": "图片原始文本独立缓存区",

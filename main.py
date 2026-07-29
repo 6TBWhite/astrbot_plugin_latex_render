@@ -3,12 +3,18 @@
 
 import asyncio
 import base64
+import html as html_lib
+import json
 import os
+import platform
 import random
 import re
+import shutil
+import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 from PIL import Image as PILImage
 
@@ -20,8 +26,24 @@ from astrbot.api.star import Context, Star
 from astrbot.core.agent.message import TextPart
 from astrbot.core.star.star_tools import StarTools
 
+try:
+    from astrbot.api.web import json_response, request
+except ImportError:
+
+    def json_response(payload):
+        return payload
+
+    request = None
+
+from . import __version__
 from .core import text_processing as _text_processing
-from .core.renderer import close_browser, html_to_image_playwright, init_browser
+from .core.models import BrowserRenderResult, RenderFailure, RenderResult
+from .core.renderer import (
+    close_browser,
+    get_renderer_status,
+    html_to_image_playwright,
+    init_browser,
+)
 from .core.template_manager import TemplateManager
 from .core.text_processing import markdown_to_html, nl2br, preserve_newlines
 
@@ -50,16 +72,24 @@ def _contains_math(content: str) -> bool:
 class LatexRenderPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.context = context
         self.config = config
         self.DATA_DIR = os.path.normpath(StarTools.get_data_dir(_PLUGIN_NAME))
         self.IMAGE_CACHE_DIR = os.path.join(self.DATA_DIR, "latex_cache")
 
         # 模板管理器
         template_dir = os.path.join(os.path.dirname(__file__), "templates")
-        self.template_mgr = TemplateManager(template_dir)
+        custom_template_dir = os.path.join(self.DATA_DIR, "custom_templates")
+        self.template_mgr = TemplateManager(template_dir, custom_template_dir)
+        try:
+            self.template_mgr.ensure_custom_slot()
+        except Exception as exc:
+            logger.warning(f"[HTML渲染] 初始化 Custom 模板失败: {exc}")
 
         # 用户默认模板设置（用户ID -> 模板名）
         self.user_default_template: dict[str, str] = {}
+        self.user_preferences: dict[str, dict] = {}
+        self.PREFERENCES_PATH = os.path.join(self.DATA_DIR, "preferences.json")
 
         # 隐藏上下文缓冲（chat_id -> [{content, ts}]），发图时原文暂存，不进消息链
         self._hidden_ctx_buffer: dict[str, list[dict]] = {}
@@ -71,6 +101,16 @@ class LatexRenderPlugin(Star):
         self._bg_asset_cache: dict[str, tuple[str, tuple[int, int]]] = {}
         self._bg_image_size: tuple[int, int] | None = None
         self._bg_round_robin_index = 0
+        self._active_renders = 0
+        self._queued_renders = 0
+        self._render_semaphore_state: tuple[object, int, asyncio.Semaphore] | None = (
+            None
+        )
+        self._last_render_metrics: dict = {}
+        self._last_render_error: dict = {}
+        self._browser_failure_count = 0
+        self._browser_cooldown_until = 0.0
+        self._register_page_api()
 
     # classic 模板可配置的 CSS 变量（配置键、CSS 变量名、单位）
     _CLASSIC_STYLE_VARS = [
@@ -83,6 +123,826 @@ class LatexRenderPlugin(Star):
         ("classic_h2_size", "--classic-h2-size", "px"),
         ("classic_h3_size", "--classic-h3-size", "px"),
     ]
+    _PAPER_STYLE_VARS = [
+        ("paper_margin_x", "--paper-margin-x", "px"),
+        ("paper_font_size", "--paper-font-size", "px"),
+        ("paper_line_height", "--paper-line-height", ""),
+        ("paper_h1_size", "--paper-h1-size", "px"),
+        ("paper_h2_size", "--paper-h2-size", "px"),
+        ("paper_h3_size", "--paper-h3-size", "px"),
+    ]
+    _STYLE_CONTROL_SPECS = {
+        "classic_body_padding": {
+            "label": "外圈边距",
+            "default": 18,
+            "min": 0,
+            "max": 48,
+            "step": 1,
+            "unit": "px",
+        },
+        "classic_page_padding_y": {
+            "label": "画布上下留白",
+            "default": 32,
+            "min": 8,
+            "max": 96,
+            "step": 1,
+            "unit": "px",
+        },
+        "classic_page_padding_x": {
+            "label": "画布左右留白",
+            "default": 28,
+            "min": 8,
+            "max": 96,
+            "step": 1,
+            "unit": "px",
+        },
+        "classic_font_size": {
+            "label": "正文字号",
+            "default": 22,
+            "min": 12,
+            "max": 34,
+            "step": 1,
+            "unit": "px",
+        },
+        "classic_line_height": {
+            "label": "正文行高",
+            "default": 1.8,
+            "min": 1.2,
+            "max": 2.4,
+            "step": 0.05,
+            "unit": "",
+        },
+        "classic_h1_size": {
+            "label": "一级标题",
+            "default": 31,
+            "min": 20,
+            "max": 48,
+            "step": 1,
+            "unit": "px",
+        },
+        "classic_h2_size": {
+            "label": "二级标题",
+            "default": 26,
+            "min": 18,
+            "max": 42,
+            "step": 1,
+            "unit": "px",
+        },
+        "classic_h3_size": {
+            "label": "三级标题",
+            "default": 23,
+            "min": 16,
+            "max": 36,
+            "step": 1,
+            "unit": "px",
+        },
+        "paper_margin_x": {
+            "label": "左右页边距",
+            "default": 76,
+            "min": 32,
+            "max": 160,
+            "step": 1,
+            "unit": "px",
+        },
+        "paper_margin_y": {
+            "label": "上下页边距",
+            "default": 76,
+            "min": 24,
+            "max": 180,
+            "step": 1,
+            "unit": "px",
+        },
+        "paper_font_size": {
+            "label": "正文字号",
+            "default": 16,
+            "min": 12,
+            "max": 24,
+            "step": 1,
+            "unit": "px",
+        },
+        "paper_line_height": {
+            "label": "正文行高",
+            "default": 1.75,
+            "min": 1.2,
+            "max": 2.4,
+            "step": 0.05,
+            "unit": "",
+        },
+        "paper_h1_size": {
+            "label": "一级标题",
+            "default": 24,
+            "min": 18,
+            "max": 40,
+            "step": 1,
+            "unit": "px",
+        },
+        "paper_h2_size": {
+            "label": "二级标题",
+            "default": 20,
+            "min": 16,
+            "max": 34,
+            "step": 1,
+            "unit": "px",
+        },
+        "paper_h3_size": {
+            "label": "三级标题",
+            "default": 18,
+            "min": 14,
+            "max": 30,
+            "step": 1,
+            "unit": "px",
+        },
+    }
+    _WEB_CONFIG_SPECS = {
+        "default_template": {
+            "label": "默认模板",
+            "type": "select",
+            "default": "",
+            "hint": "未显式指定模板时使用；留空则自动选择第一个可用模板。",
+        },
+        "default_layout": {
+            "label": "默认布局",
+            "type": "select",
+            "default": "auto",
+            "options": ["auto", "single"],
+            "option_labels": [
+                "auto · 超长时分页",
+                "single · 单张长图",
+            ],
+            "hint": (
+                "auto 仅在内容超过分页高度时分页；single 输出单张长图。"
+                "固定纸张尺寸由 Paper 模板决定。"
+            ),
+        },
+        "max_page_height": {
+            "label": "自动分页高度",
+            "type": "number",
+            "default": 3200,
+            "min": 1200,
+            "max": 6000,
+            "step": 100,
+            "unit": "CSS px",
+            "hint": (
+                "auto 超过该高度后在语义块边界分页；"
+                "普通聊天建议 2400–4000，默认 3200。固定 A4 模板不受影响。"
+            ),
+        },
+        "render_width": {
+            "label": "渲染宽度",
+            "type": "number",
+            "default": 600,
+            "min": 320,
+            "max": 1600,
+            "step": 1,
+            "hint": "控制普通模板的 CSS 排版宽度；越宽，每行容纳的内容越多。",
+        },
+        "render_scale": {
+            "label": "清晰度倍数",
+            "type": "number",
+            "default": 2,
+            "min": 1,
+            "max": 4,
+            "step": 1,
+            "hint": "提高输出分辨率；倍数越高越清晰，也会增加渲染耗时和图片体积。",
+        },
+        "enable_markdown": {
+            "label": "Markdown 渲染",
+            "type": "boolean",
+            "default": True,
+            "hint": "将标题、列表、引用、代码块和表格等 Markdown 语法转换为排版内容。",
+        },
+        "enable_math": {
+            "label": "LaTeX 数学公式",
+            "type": "boolean",
+            "default": True,
+            "hint": "启用离线 MathJax，渲染行内公式、块公式和常见 LaTeX 环境。",
+        },
+        "show_page_numbers": {
+            "label": "多页显示页码",
+            "type": "boolean",
+            "default": True,
+            "hint": "分页输出时在每张图片右下角标注当前页和总页数。",
+        },
+        "max_input_chars": {
+            "label": "最大输入字符数",
+            "type": "number",
+            "default": 50_000,
+            "min": 100,
+            "max": 500_000,
+            "step": 100,
+            "hint": "超过此长度会拒绝渲染，避免单个任务占用过多内存和浏览器资源。",
+        },
+        "render_timeout_seconds": {
+            "label": "渲染超时",
+            "type": "number",
+            "default": 30,
+            "min": 5,
+            "max": 180,
+            "step": 1,
+            "unit": "秒",
+            "hint": "限制任务从排队到 Chromium 排版完成的最长等待时间；超时会中止并返回明确提示。",
+        },
+        "max_pages": {
+            "label": "单次最多页数",
+            "type": "number",
+            "default": 8,
+            "min": 1,
+            "max": 30,
+            "step": 1,
+            "hint": "分页结果超过此页数时拒绝输出，防止一次消息生成过多图片。",
+        },
+        "max_concurrent_renders": {
+            "label": "最大并发渲染",
+            "type": "number",
+            "default": 2,
+            "min": 1,
+            "max": 16,
+            "step": 1,
+            "hint": "允许同时进入 Chromium 的任务数；公开机器人通常建议设置为 1–3。",
+        },
+        "trusted_html_mode": {
+            "label": "可信 HTML/CSS 模式",
+            "type": "boolean",
+            "default": False,
+            "danger": True,
+            "hint": "允许更完整的 HTML/CSS，仅适合可信内容和私人部署；公开机器人不建议开启。",
+        },
+        "allow_remote_assets": {
+            "label": "允许远程资源",
+            "type": "boolean",
+            "default": False,
+            "danger": True,
+            "hint": "允许模板加载远程资源，必须同时开启可信模式；可能产生隐私和内网访问风险。",
+        },
+    }
+
+    def _register_page_api(self) -> None:
+        if not hasattr(self.context, "register_web_api"):
+            return
+        prefix = f"/{_PLUGIN_NAME}/page"
+        routes = [
+            ("bootstrap", self._api_page_bootstrap, ["GET"], "读取渲染工作台数据"),
+            ("config", self._api_page_save_config, ["POST"], "保存渲染工作台配置"),
+            (
+                "config/reset",
+                self._api_page_reset_config,
+                ["POST"],
+                "重置渲染工作台配置",
+            ),
+            ("preview", self._api_page_preview, ["POST"], "生成模板实时预览"),
+            ("template", self._api_page_template, ["GET"], "读取模板源码"),
+            (
+                "template/save",
+                self._api_page_save_template,
+                ["POST"],
+                "保存自定义模板",
+            ),
+            (
+                "template/delete",
+                self._api_page_delete_template,
+                ["POST"],
+                "删除自定义模板",
+            ),
+            (
+                "template/duplicate",
+                self._api_page_duplicate_template,
+                ["POST"],
+                "复制模板为自定义模板",
+            ),
+            (
+                "templates/export",
+                self._api_page_export_templates,
+                ["GET"],
+                "导出自定义模板",
+            ),
+            (
+                "templates/import",
+                self._api_page_import_templates,
+                ["POST"],
+                "导入自定义模板",
+            ),
+            ("status", self._api_page_status, ["GET"], "读取渲染器诊断状态"),
+        ]
+        for suffix, handler, methods, description in routes:
+            self.context.register_web_api(
+                f"{prefix}/{suffix}",
+                handler,
+                methods,
+                description,
+            )
+
+    @staticmethod
+    async def _api_request_body() -> dict:
+        if request is None:
+            return {}
+        try:
+            result = await request.json({})
+            return result if isinstance(result, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _api_query_value(name: str) -> str:
+        if request is None:
+            return ""
+        try:
+            return str(request.query.get(name, "") or "").strip()
+        except Exception:
+            return ""
+
+    def _template_payload(self) -> list[dict]:
+        payload: list[dict] = []
+        for name in self._get_available_templates():
+            metadata = self.template_mgr.get_template_metadata(name)
+            controls: list[dict] = []
+            for key in metadata.get("css_variables", []):
+                spec = self._STYLE_CONTROL_SPECS.get(str(key))
+                if not spec:
+                    continue
+                controls.append(
+                    {
+                        "key": key,
+                        **spec,
+                        "value": self.config.get(key, spec["default"]),
+                    }
+                )
+            payload.append(
+                {
+                    "name": name,
+                    "display_name": metadata.get("display_name", name),
+                    "description": metadata.get("description", ""),
+                    "scene": metadata.get("scene", "custom"),
+                    "tags": metadata.get("tags", []),
+                    "source": metadata.get("source", "builtin"),
+                    "editable": bool(metadata.get("editable", False)),
+                    "base_template": metadata.get("base_template", name),
+                    "controls": controls,
+                    "fixed_page": metadata.get("fixed_page"),
+                }
+            )
+        return payload
+
+    def _web_config_payload(self) -> list[dict]:
+        templates = self._get_available_templates()
+        fields: list[dict] = []
+        for key, definition in self._WEB_CONFIG_SPECS.items():
+            item = {"key": key, **definition}
+            item["value"] = self.config.get(key, definition["default"])
+            if key == "default_template":
+                item["options"] = [""] + templates
+                item["option_labels"] = ["自动选择"] + templates
+            elif key == "default_layout" and item["value"] not in item["options"]:
+                # paged 曾作为公开选项，现作为 auto 的后端兼容别名保留。
+                item["value"] = "auto"
+            fields.append(item)
+        return fields
+
+    def _normalize_web_config_values(self, values: dict) -> dict:
+        normalized: dict = {}
+        templates = self._get_available_templates()
+        for key, raw_value in values.items():
+            spec = self._WEB_CONFIG_SPECS.get(str(key))
+            if not spec:
+                continue
+            value_type = spec["type"]
+            if value_type == "boolean":
+                if not isinstance(raw_value, bool):
+                    raise ValueError(f"{spec['label']} 必须是布尔值")
+                normalized[key] = raw_value
+                continue
+            if value_type == "select":
+                value = str(raw_value or "").strip()
+                if key == "default_layout":
+                    value = self._normalize_layout_value(value)
+                options = (
+                    [""] + templates
+                    if key == "default_template"
+                    else list(spec.get("options", []))
+                )
+                if value not in options:
+                    raise ValueError(f"{spec['label']} 的选项无效")
+                normalized[key] = value
+                continue
+            try:
+                number = float(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{spec['label']} 必须是数字") from exc
+            number = max(float(spec["min"]), min(number, float(spec["max"])))
+            default = spec["default"]
+            normalized[key] = int(number) if isinstance(default, int) else number
+        if normalized.get("allow_remote_assets") and not (
+            normalized.get(
+                "trusted_html_mode",
+                bool(self.config.get("trusted_html_mode", False)),
+            )
+        ):
+            raise ValueError("允许远程资源前必须先开启可信 HTML/CSS 模式")
+        return normalized
+
+    def _normalize_style_values(self, template_name: str, values: dict) -> dict:
+        metadata = self.template_mgr.get_template_metadata(template_name)
+        allowed = {str(key) for key in metadata.get("css_variables", [])}
+        normalized: dict = {}
+        for key, raw_value in values.items():
+            spec = self._STYLE_CONTROL_SPECS.get(str(key))
+            if not spec or key not in allowed:
+                continue
+            try:
+                number = float(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{spec['label']} 必须是数字") from exc
+            number = max(float(spec["min"]), min(number, float(spec["max"])))
+            default = spec["default"]
+            normalized[key] = (
+                int(number) if isinstance(default, int) else round(number, 3)
+            )
+        return normalized
+
+    def _save_runtime_config(self, values: dict) -> None:
+        for key, value in values.items():
+            self.config[key] = value
+        saver = getattr(self.config, "save_config", None)
+        if callable(saver):
+            saver()
+        self._refresh_template_schema_options()
+
+    async def _api_page_bootstrap(self):
+        return json_response(
+            {
+                "ok": True,
+                "plugin": {
+                    "id": _PLUGIN_NAME,
+                    "display_name": "LaTeX / Markdown 图片渲染",
+                    "version": __version__,
+                },
+                "config_fields": self._web_config_payload(),
+                "templates": self._template_payload(),
+                "preview_content": TemplateManager.get_default_test_content(),
+                "status": self._safe_renderer_status(),
+            }
+        )
+
+    async def _api_page_save_config(self):
+        body = await self._api_request_body()
+        values = body.get("values")
+        if not isinstance(values, dict):
+            return json_response({"error": "invalid_request_body"})
+        try:
+            template_name = str(body.get("template", "") or "").strip()
+            if template_name:
+                if not self._has_template(template_name):
+                    raise ValueError("模板不存在")
+                normalized = self._normalize_style_values(template_name, values)
+            else:
+                normalized = self._normalize_web_config_values(values)
+            if not normalized:
+                raise ValueError("没有可保存的配置项")
+            self._save_runtime_config(normalized)
+            return json_response(
+                {
+                    "ok": True,
+                    "saved": normalized,
+                    "config_fields": self._web_config_payload(),
+                    "templates": self._template_payload(),
+                }
+            )
+        except ValueError as exc:
+            return json_response({"error": "invalid_config", "message": str(exc)})
+        except Exception as exc:
+            logger.exception(f"[HTML渲染] WebUI 保存配置失败: {exc}")
+            return json_response({"error": "save_failed", "message": "配置保存失败"})
+
+    async def _api_page_reset_config(self):
+        body = await self._api_request_body()
+        template_name = str(body.get("template", "") or "").strip()
+        if template_name:
+            if not self._has_template(template_name):
+                return json_response(
+                    {"error": "invalid_template", "message": "模板不存在"}
+                )
+            metadata = self.template_mgr.get_template_metadata(template_name)
+            values = {
+                key: self._STYLE_CONTROL_SPECS[key]["default"]
+                for key in metadata.get("css_variables", [])
+                if key in self._STYLE_CONTROL_SPECS
+            }
+        else:
+            values = {
+                key: spec["default"] for key, spec in self._WEB_CONFIG_SPECS.items()
+            }
+        self._save_runtime_config(values)
+        return json_response(
+            {
+                "ok": True,
+                "saved": values,
+                "config_fields": self._web_config_payload(),
+                "templates": self._template_payload(),
+            }
+        )
+
+    async def _api_page_template(self):
+        name = self._api_query_value("name")
+        if not self._has_template(name):
+            return json_response({"error": "invalid_template", "message": "模板不存在"})
+        metadata = self.template_mgr.get_template_metadata(name)
+        try:
+            html = self.template_mgr.load_template(name)
+        except Exception as exc:
+            return json_response({"error": "template_read_failed", "message": str(exc)})
+        return json_response(
+            {
+                "ok": True,
+                "name": name,
+                "html": html,
+                "metadata": metadata,
+            }
+        )
+
+    async def _api_page_save_template(self):
+        body = await self._api_request_body()
+        try:
+            metadata = self.template_mgr.save_custom_template(
+                str(body.get("name", "") or ""),
+                str(body.get("html", "") or ""),
+                display_name=str(body.get("display_name", "") or ""),
+                description=str(body.get("description", "") or ""),
+                base_template=str(body.get("base_template", "classic") or "classic"),
+            )
+            self._refresh_template_schema_options()
+            return json_response(
+                {
+                    "ok": True,
+                    "metadata": metadata,
+                    "templates": self._template_payload(),
+                }
+            )
+        except ValueError as exc:
+            return json_response({"error": "invalid_template", "message": str(exc)})
+        except Exception as exc:
+            logger.exception(f"[HTML渲染] WebUI 保存自定义模板失败: {exc}")
+            return json_response(
+                {"error": "save_failed", "message": "自定义模板保存失败"}
+            )
+
+    async def _api_page_delete_template(self):
+        body = await self._api_request_body()
+        name = str(body.get("name", "") or "").strip()
+        try:
+            self.template_mgr.delete_custom_template(name)
+            cleared = self._clear_removed_template_references(name)
+            self._refresh_template_schema_options()
+            return json_response(
+                {
+                    "ok": True,
+                    "name": name,
+                    "preferences_cleared": cleared,
+                    "templates": self._template_payload(),
+                }
+            )
+        except ValueError as exc:
+            return json_response({"error": "invalid_template", "message": str(exc)})
+        except Exception as exc:
+            logger.exception(f"[HTML渲染] WebUI 删除自定义模板失败: {exc}")
+            return json_response(
+                {"error": "delete_failed", "message": "自定义模板删除失败"}
+            )
+
+    async def _api_page_duplicate_template(self):
+        body = await self._api_request_body()
+        source = str(body.get("source", "") or "").strip()
+        target = str(body.get("target", "") or "").strip()
+        try:
+            metadata = self.template_mgr.duplicate_template(
+                source,
+                target,
+                display_name=str(body.get("display_name", "") or ""),
+            )
+            self._refresh_template_schema_options()
+            return json_response(
+                {
+                    "ok": True,
+                    "metadata": metadata,
+                    "templates": self._template_payload(),
+                }
+            )
+        except ValueError as exc:
+            return json_response({"error": "invalid_template", "message": str(exc)})
+        except Exception as exc:
+            logger.exception(f"[HTML渲染] WebUI 复制模板失败: {exc}")
+            return json_response(
+                {"error": "duplicate_failed", "message": "模板复制失败"}
+            )
+
+    async def _api_page_export_templates(self):
+        templates: list[dict] = []
+        for name in self.template_mgr.get_custom_templates():
+            templates.append(
+                {
+                    "name": name,
+                    "html": self.template_mgr.load_template(name),
+                    "metadata": self.template_mgr.get_template_metadata(name),
+                }
+            )
+        return json_response(
+            {
+                "ok": True,
+                "schema_version": 1,
+                "templates": templates,
+            }
+        )
+
+    async def _api_page_import_templates(self):
+        body = await self._api_request_body()
+        items = body.get("templates")
+        if not isinstance(items, list) or len(items) > 50:
+            return json_response({"error": "invalid_import", "message": "导入数据无效"})
+        imported: list[str] = []
+        try:
+            prepared: list[dict] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ValueError("模板条目格式无效")
+                metadata = item.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                name = self.template_mgr.validate_template_name(
+                    str(item.get("name", "") or "")
+                )
+                if name in self.template_mgr.get_builtin_templates():
+                    raise ValueError(f"不能覆盖内置模板: {name}")
+                html = self.template_mgr.validate_custom_html(
+                    str(item.get("html", "") or "")
+                )
+                prepared.append(
+                    {
+                        "name": name,
+                        "html": html,
+                        "display_name": str(metadata.get("display_name", "") or ""),
+                        "description": str(metadata.get("description", "") or ""),
+                        "base_template": str(
+                            metadata.get("base_template", "classic") or "classic"
+                        ),
+                    }
+                )
+            for item in prepared:
+                self.template_mgr.save_custom_template(
+                    item["name"],
+                    item["html"],
+                    display_name=item["display_name"],
+                    description=item["description"],
+                    base_template=item["base_template"],
+                )
+                imported.append(item["name"])
+            self._refresh_template_schema_options()
+            return json_response(
+                {
+                    "ok": True,
+                    "imported": imported,
+                    "templates": self._template_payload(),
+                }
+            )
+        except ValueError as exc:
+            return json_response(
+                {
+                    "error": "invalid_import",
+                    "message": str(exc),
+                    "imported": imported,
+                }
+            )
+
+    async def _api_page_preview(self):
+        body = await self._api_request_body()
+        content = str(body.get("content", "") or "")
+        template_name = str(body.get("template", "") or "").strip()
+        layout = self._normalize_layout_value(body.get("layout", "auto"))
+        style_values = body.get("style_values", {})
+        draft_html = body.get("template_html")
+        base_template = str(body.get("base_template", "classic") or "classic").strip()
+
+        if not content.strip():
+            return json_response(
+                {"error": "invalid_content", "message": "预览内容不能为空"}
+            )
+        if layout not in {"auto", "single"}:
+            return json_response({"error": "invalid_layout", "message": "布局选项无效"})
+        if not isinstance(style_values, dict):
+            return json_response({"error": "invalid_config", "message": "排版参数无效"})
+
+        render_template = template_name
+        template_html_override: str | None = None
+        try:
+            if draft_html is not None:
+                template_html_override = self.template_mgr.validate_custom_html(
+                    str(draft_html)
+                )
+                if self._has_template(template_name):
+                    render_template = template_name
+                elif base_template in self.template_mgr.get_builtin_templates():
+                    render_template = base_template
+                else:
+                    raise ValueError("基础模板不存在")
+            elif not self._has_template(template_name):
+                raise ValueError("模板不存在")
+
+            style_owner = (
+                template_name if self._has_template(template_name) else render_template
+            )
+            normalized_styles = self._normalize_style_values(
+                style_owner,
+                style_values,
+            )
+            rendered = await self._render_content(
+                content,
+                render_template,
+                None,
+                False,
+                layout=layout,
+                style_overrides=normalized_styles,
+                template_html_override=template_html_override,
+            )
+            images: list[str] = []
+            for image in self._extract_images(rendered):
+                path = str(getattr(image, "path", "") or "")
+                if not path or not os.path.isfile(path):
+                    continue
+                suffix = os.path.splitext(path)[1].lower()
+                mime = {
+                    ".png": "image/png",
+                    ".gif": "image/gif",
+                    ".webp": "image/webp",
+                }.get(suffix, "image/jpeg")
+                with open(path, "rb") as handle:
+                    encoded = base64.b64encode(handle.read()).decode("ascii")
+                images.append(f"data:{mime};base64,{encoded}")
+            if not images:
+                return json_response(
+                    {"error": "browser_error", "message": "浏览器未生成预览图片"}
+                )
+            metrics = dict(getattr(rendered, "metrics", {}) or {})
+            return json_response(
+                {
+                    "ok": True,
+                    "images": images,
+                    "warnings": self._extract_warnings(rendered),
+                    "metrics": metrics,
+                }
+            )
+        except ValueError as exc:
+            return json_response({"error": "invalid_template", "message": str(exc)})
+        except RenderFailure as exc:
+            return json_response(
+                {
+                    "error": exc.code or "render_failed",
+                    "message": exc.message,
+                }
+            )
+        except Exception as exc:
+            logger.exception(f"[HTML渲染] WebUI 生成预览失败: {exc}")
+            return json_response({"error": "preview_failed", "message": "预览生成失败"})
+
+    def _clear_removed_template_references(self, name: str) -> int:
+        cleared = 0
+        if str(self.config.get("default_template", "") or "") == name:
+            self._save_runtime_config({"default_template": ""})
+            cleared += 1
+        for user_id, template in list(self.user_default_template.items()):
+            if template == name:
+                self.user_default_template.pop(user_id, None)
+                cleared += 1
+        for key, preference in list(self.user_preferences.items()):
+            if preference.get("template") != name:
+                continue
+            preference.pop("template", None)
+            if not preference:
+                self.user_preferences.pop(key, None)
+            cleared += 1
+        if cleared:
+            self._save_preferences()
+        return cleared
+
+    def _safe_renderer_status(self) -> dict:
+        self._ensure_render_state()
+        renderer = get_renderer_status()
+        cooldown = max(0, int(self._browser_cooldown_until - time.monotonic()))
+        return {
+            "browser_connected": bool(renderer.get("browser_connected", False)),
+            "browser_launching": bool(renderer.get("browser_launching", False)),
+            "mathjax_available": os.path.isfile(
+                os.path.join(_PLUGIN_DIR, "assets", "mathjax-tex-svg.js")
+            ),
+            "cjk_font_available": self._has_probable_cjk_font(),
+            "active_renders": self._active_renders,
+            "queued_renders": self._queued_renders,
+            "template_count": len(self._get_available_templates()),
+            "custom_template_count": len(self.template_mgr.get_custom_templates()),
+            "last_render_seconds": renderer.get("last_render_seconds", 0),
+            "last_metrics": dict(self._last_render_metrics),
+            "last_error": dict(self._last_render_error),
+            "cooldown_seconds": cooldown,
+        }
+
+    async def _api_page_status(self):
+        return json_response({"ok": True, "status": self._safe_renderer_status()})
 
     # ==================== 生命周期 ====================
 
@@ -98,6 +958,8 @@ class LatexRenderPlugin(Star):
             logger.info(
                 f"HTML渲染插件: Playwright 浏览器路径 → {playwright_browsers_dir}"
             )
+            self.PREFERENCES_PATH = os.path.join(self.DATA_DIR, "preferences.json")
+            self._load_preferences()
             self._cleanup_cache()
             await self.template_mgr.load_templates()
             self._refresh_template_schema_options()
@@ -154,6 +1016,7 @@ class LatexRenderPlugin(Star):
             ) from e
 
     async def terminate(self):
+        self._save_preferences()
         await close_browser()
         logger.info("HTML 渲染插件已停止")
 
@@ -194,11 +1057,12 @@ class LatexRenderPlugin(Star):
             self._bg_image_size = None
             return ""
 
-        bg_path = os.path.join(_PLUGIN_DIR, bg_config)
-        if not os.path.isfile(bg_path):
-            logger.warning(f"[HTML渲染] 背景图片不存在: {bg_path}，将使用默认背景")
+        available = set(self._get_available_background_images())
+        if bg_config not in available:
+            logger.warning(f"[HTML渲染] 背景图片不在管理员素材目录中: {bg_config}")
             self._bg_image_size = None
             return ""
+        bg_path = os.path.join(_PLUGIN_DIR, bg_config.replace("/", os.sep))
 
         cached_asset = self._bg_asset_cache.get(bg_config)
         if cached_asset:
@@ -508,6 +1372,118 @@ body > * {{
 
         asyncio.create_task(_delete())
 
+    # ==================== 用户偏好持久化 ====================
+
+    @staticmethod
+    def _normalize_layout_value(value: object) -> str:
+        layout = str(value or "").strip().lower()
+        return "auto" if layout == "paged" else layout
+
+    def _ensure_preference_state(self) -> None:
+        if not hasattr(self, "user_preferences"):
+            self.user_preferences = {}
+        if not hasattr(self, "PREFERENCES_PATH"):
+            self.PREFERENCES_PATH = os.path.join(self.DATA_DIR, "preferences.json")
+
+    def _load_preferences(self) -> None:
+        self._ensure_preference_state()
+        self.user_preferences = {}
+        path = self.PREFERENCES_PATH
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                raw = json.load(handle)
+            entries = raw.get("entries", {}) if isinstance(raw, dict) else {}
+            if not isinstance(entries, dict):
+                raise ValueError("entries 不是对象")
+            for key, value in entries.items():
+                if not isinstance(key, str) or not isinstance(value, dict):
+                    continue
+                cleaned: dict[str, str] = {}
+                template = str(value.get("template", "") or "").strip()
+                layout = self._normalize_layout_value(value.get("layout", ""))
+                theme = str(value.get("theme", "") or "").strip()
+                if template:
+                    cleaned["template"] = template
+                if layout in {"auto", "single"}:
+                    cleaned["layout"] = layout
+                if theme:
+                    cleaned["theme"] = theme
+                if cleaned:
+                    self.user_preferences[key] = cleaned
+            logger.info(
+                f"[HTML渲染] 已加载 {len(self.user_preferences)} 条用户渲染偏好"
+            )
+        except Exception as exc:
+            logger.warning(f"[HTML渲染] 用户偏好文件损坏，已忽略: {exc}")
+            self.user_preferences = {}
+
+    def _save_preferences(self) -> None:
+        self._ensure_preference_state()
+        path = self.PREFERENCES_PATH
+        temp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            payload = {"schema_version": 1, "entries": self.user_preferences}
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, path)
+        except Exception as exc:
+            logger.warning(f"[HTML渲染] 保存用户偏好失败: {exc}")
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+
+    def _get_preference_key(self, event: AstrMessageEvent) -> str:
+        session = self._get_session_key(event) or "unknown-session"
+        return f"{session}|sender:{self._get_user_id(event)}"
+
+    def _get_event_preference(self, event: AstrMessageEvent) -> dict:
+        self._ensure_preference_state()
+        return self.user_preferences.get(self._get_preference_key(event), {})
+
+    def _get_event_template(self, event: AstrMessageEvent) -> str:
+        preference = self._get_event_preference(event)
+        template = str(preference.get("template", "") or "").strip()
+        if template and self._has_template(template):
+            return template
+        if template:
+            preference.pop("template", None)
+            if not preference:
+                self.user_preferences.pop(self._get_preference_key(event), None)
+            logger.warning(f"[HTML渲染] 已清理失效的持久化模板偏好: {template}")
+            self._save_preferences()
+        return self._get_default_template(self._get_user_id(event))
+
+    def _get_event_layout(self, event: AstrMessageEvent) -> str:
+        preference = self._get_event_preference(event)
+        layout = self._normalize_layout_value(preference.get("layout", ""))
+        if layout in {"auto", "single"}:
+            return layout
+        configured = self._normalize_layout_value(
+            self.config.get("default_layout", "auto")
+        )
+        return configured if configured in {"auto", "single"} else "auto"
+
+    @staticmethod
+    def _extract_images(rendered) -> list:
+        if isinstance(rendered, RenderResult):
+            return list(rendered.images)
+        if isinstance(rendered, list):
+            return list(rendered)
+        return [rendered] if rendered is not None else []
+
+    @staticmethod
+    def _extract_warnings(rendered) -> list[str]:
+        if isinstance(rendered, RenderResult):
+            return list(rendered.warnings)
+        return []
+
     # ==================== 工具方法 ====================
 
     def _get_user_id(self, event: AstrMessageEvent) -> str:
@@ -566,8 +1542,9 @@ body > * {{
     def _get_available_background_images(self) -> list[str]:
         image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
         results: list[str] = []
+        background_dir = os.path.join(_PLUGIN_DIR, "assets", "backgrounds")
 
-        for root, _, files in os.walk(_PLUGIN_DIR):
+        for root, _, files in os.walk(background_dir):
             for filename in files:
                 if os.path.splitext(filename)[1].lower() not in image_exts:
                     continue
@@ -664,14 +1641,34 @@ body > * {{
 
         return self._get_default_template(user_id)
 
-    def _inject_template_vars(self, html: str, template_name: str) -> str:
-        """为指定模板注入可配置 CSS 变量（当前仅 classic 模板支持）。"""
-        if template_name != "classic":
+    def _style_var_definitions(self, template_name: str) -> list[tuple[str, str, str]]:
+        metadata = self.template_mgr.get_template_metadata(template_name)
+        style_family = str(
+            metadata.get("base_template", template_name) or template_name
+        )
+        return {
+            "classic": self._CLASSIC_STYLE_VARS,
+            "paper": self._PAPER_STYLE_VARS,
+        }.get(style_family, [])
+
+    def _inject_template_vars(
+        self,
+        html: str,
+        template_name: str,
+        style_overrides: dict | None = None,
+    ) -> str:
+        """为支持配置的模板注入 CSS 变量。"""
+        style_vars = self._style_var_definitions(template_name)
+        if not style_vars:
             return html
 
         lines: list[str] = []
-        for config_key, var_name, unit in self._CLASSIC_STYLE_VARS:
-            value = self.config.get(config_key)
+        for config_key, var_name, unit in style_vars:
+            value = (
+                style_overrides[config_key]
+                if style_overrides and config_key in style_overrides
+                else self.config.get(config_key)
+            )
             if value is None:
                 continue
             try:
@@ -697,29 +1694,41 @@ body > * {{
         return style_block + "\n" + html
 
     def _apply_template(
-        self, content: str, template_name: str, is_raw_html: bool = False
+        self,
+        content: str,
+        template_name: str,
+        is_raw_html: bool = False,
+        *,
+        style_overrides: dict | None = None,
+        template_html_override: str | None = None,
     ) -> str:
         """
         应用模板。
         :param is_raw_html: 若为 True，跳过 markdown/nl2br 处理，直接嵌入原始 HTML
         """
-        template = self.template_mgr.load_template(template_name)
+        template = (
+            template_html_override
+            if template_html_override is not None
+            else self.template_mgr.load_template(template_name)
+        )
 
         if is_raw_html:
             # 内容自带完整 HTML+CSS，不做任何文本处理
             html = template.replace("{{content}}", content)
-            return self._inject_template_vars(html, template_name)
+            return self._inject_template_vars(html, template_name, style_overrides)
 
         if self.config.get("enable_markdown", True):
-            content = markdown_to_html(content)
+            content = markdown_to_html(content, safe=not is_raw_html)
             html = template.replace("{{content}}", content)
-            return self._inject_template_vars(html, template_name)
+            return self._inject_template_vars(html, template_name, style_overrides)
         else:
+            if not is_raw_html:
+                content = html_lib.escape(content, quote=False)
             content = preserve_newlines(content)
 
         content = nl2br(content)
         html = template.replace("{{content}}", content)
-        return self._inject_template_vars(html, template_name)
+        return self._inject_template_vars(html, template_name, style_overrides)
 
     # ==================== 渲染核心 ====================
 
@@ -729,78 +1738,341 @@ body > * {{
         specified_template: str | None,
         user_id: str | None = None,
         is_gif: bool = False,
+        *,
+        layout: str | None = None,
+        style_overrides: dict | None = None,
+        template_html_override: str | None = None,
     ):
         """
-        执行渲染。
-        GIF 模式返回 List[Image]（静态图 + GIF），普通模式返回单个 Image。
-        失败返回 None。
+        在受限并发、超时和资源预算内执行渲染。
+        成功统一返回 RenderResult；命令层仍兼容旧式 Image/List 返回值。
         """
+        if not content or not content.strip():
+            raise RenderFailure("invalid_content", "内容不能为空")
+        max_input_chars = self._get_int_config("max_input_chars", 50_000, 100, 500_000)
+        if len(content) > max_input_chars:
+            raise RenderFailure(
+                "resource_limit",
+                f"内容长度为 {len(content)} 字符，超过上限 {max_input_chars} 字符",
+            )
+
+        self._ensure_render_state()
+        timeout_seconds = self._get_float_config(
+            "render_timeout_seconds", 30.0, 5.0, 180.0
+        )
+        semaphore = self._get_render_semaphore()
+        max_queue = self._get_int_config("max_queue_size", 8, 0, 100)
+        if semaphore.locked() and self._queued_renders >= max_queue:
+            raise RenderFailure("queue_full", "渲染队列已满，请稍后重试")
+
+        self._queued_renders += 1
+        try:
+            try:
+                await asyncio.wait_for(semaphore.acquire(), timeout=timeout_seconds)
+            except asyncio.TimeoutError as exc:
+                raise RenderFailure("timeout", "等待渲染队列超时") from exc
+        finally:
+            self._queued_renders -= 1
+
+        self._active_renders += 1
+        try:
+            return await asyncio.wait_for(
+                self._render_content_inner(
+                    content,
+                    specified_template,
+                    user_id,
+                    is_gif,
+                    layout=layout,
+                    style_overrides=style_overrides,
+                    template_html_override=template_html_override,
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            self._record_render_error("timeout", "渲染执行超时")
+            raise RenderFailure(
+                "timeout", "渲染执行超时，请缩短内容或稍后重试"
+            ) from exc
+        except RenderFailure as exc:
+            self._record_render_error(exc.code, exc.message)
+            raise
+        except Exception as exc:
+            self._record_render_error("internal_error", str(exc))
+            logger.exception(f"渲染过程异常: {exc}")
+            raise RenderFailure("internal_error", "渲染发生内部错误") from exc
+        finally:
+            self._active_renders -= 1
+            semaphore.release()
+
+    async def _render_content_inner(
+        self,
+        content: str,
+        specified_template: str | None,
+        user_id: str | None,
+        is_gif: bool,
+        *,
+        layout: str | None,
+        style_overrides: dict | None,
+        template_html_override: str | None,
+    ) -> RenderResult:
+        if time.monotonic() < self._browser_cooldown_until:
+            remaining = int(self._browser_cooldown_until - time.monotonic()) + 1
+            raise RenderFailure(
+                "browser_cooldown",
+                f"浏览器连续失败，正在冷却，请 {remaining} 秒后重试",
+            )
+
         try:
             template_name = self._select_template(content, specified_template, user_id)
-            logger.debug(f"HTML渲染: 使用模板 {template_name}, GIF模式: {is_gif}")
+        except (ValueError, FileNotFoundError) as exc:
+            raise RenderFailure("invalid_template", str(exc)) from exc
+        logger.debug(f"HTML渲染: 使用模板 {template_name}, GIF模式: {is_gif}")
+        template_metadata = self.template_mgr.get_template_metadata(template_name)
 
-            # 检测内容是否自带 <style> 标签，若有则为完整 HTML，跳过文本处理
-            has_own_style = bool(re.search(r"<style\b", content, re.IGNORECASE))
-            full_html = self._apply_template(
-                content, template_name, is_raw_html=has_own_style
-            )
-            if self.config.get("enable_math", True) and _contains_math(content):
-                full_html = self._inject_math_assets(full_html)
-            # 注入自定义背景图（转为 base64 内嵌，避免 Playwright 沙箱限制）
+        trusted_mode = bool(self.config.get("trusted_html_mode", False))
+        has_own_style = trusted_mode and bool(
+            re.search(r"<(?:style|html)\b", content, re.IGNORECASE)
+        )
+        full_html = self._apply_template(
+            content,
+            template_name,
+            is_raw_html=has_own_style,
+            style_overrides=style_overrides,
+            template_html_override=template_html_override,
+        )
+        if self.config.get("enable_math", True) and _contains_math(content):
+            full_html = self._inject_math_assets(full_html)
+
+        # Paper 必须保持纯白；其他模板可使用管理员素材目录中的背景。
+        if template_name != "paper":
             bg_data_url = self._get_bg_data_url()
             if bg_data_url:
                 bg_render_mode = self._get_background_render_mode()
                 full_html = self._inject_background_image(
                     full_html, bg_data_url, bg_render_mode
                 )
-            # GIF 模式始终用 .jpg 作为主输出（JPEG体积远小于PNG，渲染更快）
-            filename_base = f"render_{uuid.uuid4().hex[:12]}"
-            output_path = os.path.join(self.IMAGE_CACHE_DIR, f"{filename_base}.jpg")
 
-            width = self.config.get("render_width", 600)
-            if is_gif:
-                scale = self.config.get("gif_scale", self.config.get("render_scale", 2))
-            else:
-                scale = self.config.get("render_scale", 2)
+        filename_base = f"render_{uuid.uuid4().hex[:12]}"
+        output_path = os.path.join(self.IMAGE_CACHE_DIR, f"{filename_base}.jpg")
+        os.makedirs(self.IMAGE_CACHE_DIR, exist_ok=True)
 
-            success = await html_to_image_playwright(
-                html_content=full_html,
-                output_image_path=output_path,
-                scale=scale,
-                width=width,
-                is_gif=is_gif,
-                duration=self.gif_duration,
-                fps=self.gif_fps,
+        preferred_width = template_metadata.get("preferred_width")
+        width = self._get_int_config("render_width", 600, 320, 1600)
+        if isinstance(template_metadata.get("fixed_page"), dict) and isinstance(
+            preferred_width, (int, float)
+        ):
+            width = max(320, min(int(preferred_width), 1600))
+        scale = self._get_int_config("render_scale", 2, 1, 4)
+        if is_gif:
+            scale = self._get_int_config("gif_scale", scale, 1, 3)
+
+        normalized_layout = self._normalize_layout_value(
+            layout or self.config.get("default_layout", "auto")
+        )
+        if normalized_layout not in {"auto", "single"}:
+            raise RenderFailure(
+                "invalid_layout",
+                f"未知布局 {normalized_layout}，仅支持 auto、single",
             )
 
-            if not success:
-                return None
+        fixed_page_size = template_metadata.get("fixed_page")
+        if isinstance(fixed_page_size, dict):
+            fixed_page_size = dict(fixed_page_size)
+            raw_margin_y = (
+                style_overrides.get("paper_margin_y")
+                if style_overrides and "paper_margin_y" in style_overrides
+                else self.config.get(
+                    "paper_margin_y",
+                    int(fixed_page_size.get("top_margin", 76)),
+                )
+            )
+            try:
+                margin_y = int(raw_margin_y)
+            except (TypeError, ValueError):
+                margin_y = int(fixed_page_size.get("top_margin", 76))
+            margin_y = max(24, min(margin_y, 180))
+            fixed_page_size["top_margin"] = margin_y
+            fixed_page_size["bottom_margin"] = margin_y
+            fixed_page_size["content_height"] = max(
+                400, int(fixed_page_size.get("height", 1123)) - 2 * margin_y
+            )
 
-            if is_gif:
-                results = []
-                delete_paths = []
-                if os.path.exists(output_path):
-                    results.append(Image.fromFileSystem(output_path))
-                    delete_paths.append(output_path)
-                gif_path = os.path.join(self.IMAGE_CACHE_DIR, f"{filename_base}.gif")
-                if os.path.exists(gif_path):
-                    results.append(Image.fromFileSystem(gif_path))
-                    delete_paths.append(gif_path)
-                if delete_paths:
-                    self._schedule_delete(*delete_paths)
-                return results if results else None
-            else:
-                if os.path.exists(output_path):
-                    img = Image.fromFileSystem(output_path)
-                    self._schedule_delete(output_path)
-                    return img
-                return None
-        except Exception as e:
-            logger.error(f"渲染过程异常: {e}")
-            import traceback
+        render_kwargs = dict(
+            html_content=full_html,
+            output_image_path=output_path,
+            scale=scale,
+            width=width,
+            is_gif=is_gif,
+            duration=getattr(self, "gif_duration", 3.0),
+            fps=getattr(self, "gif_fps", 15),
+            layout=normalized_layout,
+            max_page_height=self._get_int_config("max_page_height", 3200, 400, 20_000),
+            max_pages=self._get_int_config("max_pages", 8, 1, 30),
+            max_output_bytes=self._get_int_config(
+                "max_output_bytes", 6 * 1024 * 1024, 100_000, 50 * 1024 * 1024
+            ),
+            show_page_numbers=bool(self.config.get("show_page_numbers", True)),
+            allow_remote_assets=bool(
+                trusted_mode and self.config.get("allow_remote_assets", False)
+            ),
+            fixed_page_size=fixed_page_size,
+        )
 
-            logger.error(traceback.format_exc())
-            raise
+        browser_result = await html_to_image_playwright(**render_kwargs)
+        normalized = self._normalize_browser_result(browser_result, output_path)
+        if not normalized:
+            # 浏览器断开后底层会清空实例；只重试一次。
+            if normalized.error_code == "browser_error":
+                logger.warning("[HTML渲染] 浏览器渲染失败，重建后重试一次")
+                browser_result = await html_to_image_playwright(**render_kwargs)
+                normalized = self._normalize_browser_result(browser_result, output_path)
+
+        if not normalized:
+            if normalized.error_code == "browser_error":
+                self._browser_failure_count += 1
+                cooldown = self._get_float_config(
+                    "browser_failure_cooldown_seconds", 30.0, 1.0, 300.0
+                )
+                self._browser_cooldown_until = time.monotonic() + cooldown
+            raise RenderFailure(
+                normalized.error_code or "browser_error",
+                normalized.error_message or "Chromium 渲染失败",
+            )
+
+        self._browser_failure_count = 0
+        self._browser_cooldown_until = 0.0
+        images = [
+            Image.fromFileSystem(path)
+            for path in normalized.paths
+            if os.path.isfile(path)
+        ]
+        if not images:
+            raise RenderFailure("browser_error", "浏览器未生成任何图片")
+
+        self._schedule_delete(*normalized.paths)
+        self._last_render_metrics = {
+            **normalized.metrics,
+            "template": template_name,
+            "layout": normalized_layout,
+            "image_count": len(images),
+        }
+        self._last_render_error = {}
+        return RenderResult(
+            images=images,
+            template=template_name,
+            warnings=normalized.warnings,
+            metrics=self._last_render_metrics,
+        )
+
+    def _ensure_render_state(self) -> None:
+        if not hasattr(self, "_active_renders"):
+            self._active_renders = 0
+        if not hasattr(self, "_queued_renders"):
+            self._queued_renders = 0
+        if not hasattr(self, "_render_semaphore_state"):
+            self._render_semaphore_state = None
+        if not hasattr(self, "_last_render_metrics"):
+            self._last_render_metrics = {}
+        if not hasattr(self, "_last_render_error"):
+            self._last_render_error = {}
+        if not hasattr(self, "_browser_failure_count"):
+            self._browser_failure_count = 0
+        if not hasattr(self, "_browser_cooldown_until"):
+            self._browser_cooldown_until = 0.0
+
+    def _get_render_semaphore(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        limit = self._get_int_config("max_concurrent_renders", 2, 1, 16)
+        state = self._render_semaphore_state
+        if state is None or state[0] is not loop or state[1] != limit:
+            semaphore = asyncio.Semaphore(limit)
+            self._render_semaphore_state = (loop, limit, semaphore)
+            return semaphore
+        return state[2]
+
+    def _get_int_config(
+        self, key: str, default: int, minimum: int, maximum: int
+    ) -> int:
+        try:
+            value = int(self.config.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(value, maximum))
+
+    def _get_float_config(
+        self, key: str, default: float, minimum: float, maximum: float
+    ) -> float:
+        try:
+            value = float(self.config.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(value, maximum))
+
+    @staticmethod
+    def _normalize_browser_result(result, output_path: str) -> BrowserRenderResult:
+        if isinstance(result, BrowserRenderResult):
+            return result
+        if result:
+            paths = [output_path] if os.path.isfile(output_path) else []
+            base, extension = os.path.splitext(output_path)
+            page = 2
+            while os.path.isfile(f"{base}_p{page}{extension}"):
+                paths.append(f"{base}_p{page}{extension}")
+                page += 1
+            gif_path = f"{base}.gif"
+            if os.path.isfile(gif_path):
+                paths.append(gif_path)
+            return BrowserRenderResult(success=bool(paths), paths=paths)
+        return BrowserRenderResult(
+            success=False,
+            error_code="browser_error",
+            error_message="Chromium 渲染失败",
+        )
+
+    def _record_render_error(self, code: str, message: str) -> None:
+        self._last_render_error = {
+            "code": code,
+            "message": message,
+            "timestamp": int(time.time()),
+        }
+
+    async def _render_for_layout(
+        self,
+        content: str,
+        template: str | None,
+        user_id: str | None,
+        is_gif: bool,
+        layout: str,
+    ):
+        """Avoid changing legacy call shape when the effective layout is auto."""
+
+        if layout == "auto":
+            return await self._render_content(content, template, user_id, is_gif)
+        return await self._render_content(
+            content,
+            template,
+            user_id,
+            is_gif,
+            layout=layout,
+        )
+
+    @staticmethod
+    def _format_render_failure(exc: Exception) -> str:
+        if isinstance(exc, RenderFailure):
+            labels = {
+                "invalid_content": "内容无效",
+                "invalid_template": "模板无效",
+                "invalid_layout": "布局无效",
+                "resource_limit": "资源超限",
+                "queue_full": "队列已满",
+                "timeout": "渲染超时",
+                "browser_error": "浏览器故障",
+                "browser_cooldown": "浏览器冷却",
+                "internal_error": "内部错误",
+            }
+            label = labels.get(exc.code, exc.code or "失败")
+            return f"渲染失败（{label}）：{exc.message}"
+        return f"渲染失败：{exc}"
 
     # ==================== 命令 ====================
 
@@ -816,7 +2088,7 @@ body > * {{
 
         if not text:
             try:
-                tpl = self._get_default_template(user_id)
+                tpl = self._get_event_template(event)
             except Exception as e:
                 yield event.plain_result(f"渲染失败：{e}")
                 return
@@ -826,19 +2098,18 @@ body > * {{
             logger.info("[HTML渲染] 使用 GIF 弹幕测试内容")
 
         try:
-            tpl = self._get_default_template(user_id)
-            image = await self._render_content(text, tpl, user_id, False)
+            tpl = self._get_event_template(event)
+            layout = self._get_event_layout(event)
+            rendered = await self._render_for_layout(text, tpl, user_id, False, layout)
         except Exception as e:
-            yield event.plain_result(f"渲染失败：{e}")
+            yield event.plain_result(self._format_render_failure(e))
             return
-        if image:
+        images = self._extract_images(rendered)
+        if images:
             self._push_hidden_ctx(event, text)
-            if isinstance(image, list):
-                yield event.chain_result(image)
-            else:
-                yield event.chain_result([image])
+            yield event.chain_result(images)
         else:
-            yield event.plain_result("❌ 渲染失败，请检查日志获取详细信息")
+            yield event.plain_result("❌ 渲染失败：浏览器未生成图片")
 
     @filter.command("切换", alias={"switch"})
     async def cmd_switch_template(self, event: AstrMessageEvent):
@@ -850,7 +2121,7 @@ body > * {{
 
         user_id = self._get_user_id(event)
         try:
-            current = self._get_default_template(user_id)
+            current = self._get_event_template(event)
         except Exception:
             current = "未设置"
         available = self._get_available_templates()
@@ -889,6 +2160,12 @@ body > * {{
             return
 
         self.user_default_template[user_id] = template_name
+        self._ensure_preference_state()
+        preference = self.user_preferences.setdefault(
+            self._get_preference_key(event), {}
+        )
+        preference["template"] = template_name
+        self._save_preferences()
         logger.info(
             f"[HTML渲染] 用户 {user_id} 切换默认模板: {current} -> {template_name}"
         )
@@ -1041,17 +2318,18 @@ body > * {{
         if not text:
             text = TemplateManager.get_default_test_content(template_name)
         try:
-            image = await self._render_content(text, template_name, user_id, False)
+            layout = self._get_event_layout(event)
+            rendered = await self._render_for_layout(
+                text, template_name, user_id, False, layout
+            )
         except Exception as e:
-            yield event.plain_result(f"渲染失败：{e}")
+            yield event.plain_result(self._format_render_failure(e))
             return
-        if image:
+        images = self._extract_images(rendered)
+        if images:
             self._push_hidden_ctx(event, text)
             chain = [Plain(f"🖼️ 模板预览: {template_name}")]
-            if isinstance(image, list):
-                chain.extend(image)
-            else:
-                chain.append(image)
+            chain.extend(images)
             yield event.chain_result(chain)
         else:
             yield event.plain_result("❌ 模板预览失败，请检查日志")
@@ -1065,9 +2343,8 @@ body > * {{
             return
 
         self.template_mgr.update_template_id_map()
-        user_id = self._get_user_id(event)
         try:
-            current = self._get_default_template(user_id)
+            current = self._get_event_template(event)
         except Exception:
             current = "未设置"
 
@@ -1075,7 +2352,12 @@ body > * {{
         for idx in sorted(self.template_mgr.template_id_map.keys()):
             name = self.template_mgr.template_id_map[idx]
             marker = " ← 当前" if name == current else ""
-            lines.append(f"  {idx}. {name}{marker}")
+            metadata = self.template_mgr.get_template_metadata(name)
+            display_name = str(metadata.get("display_name", "") or "").strip()
+            suffix = (
+                f" — {display_name}" if display_name and display_name != name else ""
+            )
+            lines.append(f"  {idx}. {name}{marker}{suffix}")
 
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━")
@@ -1086,6 +2368,132 @@ body > * {{
 
         yield event.plain_result("\n".join(lines))
 
+    @filter.command("渲染设置", alias={"rendersettings"})
+    async def cmd_render_settings(self, event: AstrMessageEvent):
+        """查看或修改当前会话用户的渲染布局偏好。"""
+
+        full_msg = re.sub(r"\[At:\d+\]\s*", "", event.message_str.strip()).strip()
+        parts = full_msg.split()
+        preference = self._get_event_preference(event)
+
+        if len(parts) == 1:
+            template = self._get_event_template(event)
+            layout = self._get_event_layout(event)
+            theme = str(preference.get("theme", "default") or "default")
+            yield event.plain_result(
+                "🧾 当前渲染设置\n"
+                f"模板：{template}\n"
+                f"布局：{layout}\n"
+                f"主题：{theme}\n\n"
+                "修改布局：/渲染设置 布局 auto|single\n"
+                "模板仍使用：/切换 <模板名或ID>"
+            )
+            return
+
+        if len(parts) != 3 or parts[1].lower() not in {"布局", "layout"}:
+            yield event.plain_result("用法：/渲染设置 布局 auto|single")
+            return
+
+        layout = self._normalize_layout_value(parts[2])
+        if layout not in {"auto", "single"}:
+            yield event.plain_result("❌ 布局仅支持 auto、single")
+            return
+
+        self._ensure_preference_state()
+        key = self._get_preference_key(event)
+        self.user_preferences.setdefault(key, {})["layout"] = layout
+        self._save_preferences()
+        yield event.plain_result(f"✅ 当前会话的渲染布局已设为: {layout}")
+
+    @filter.command("渲染重置", alias={"renderreset"})
+    async def cmd_render_reset(self, event: AstrMessageEvent):
+        """清除当前会话用户的持久化渲染偏好。"""
+
+        self._ensure_preference_state()
+        removed = self.user_preferences.pop(self._get_preference_key(event), None)
+        self.user_default_template.pop(self._get_user_id(event), None)
+        self._save_preferences()
+        if removed:
+            yield event.plain_result("✅ 已清除当前会话的渲染偏好")
+        else:
+            yield event.plain_result("ℹ️ 当前会话没有已保存的渲染偏好")
+
+    @filter.command("渲染状态", alias={"renderstatus"})
+    async def cmd_render_status(self, event: AstrMessageEvent):
+        """报告不含本机路径的安全运行状态。"""
+
+        self._ensure_render_state()
+        renderer_status = get_renderer_status()
+        cache_files = 0
+        cache_bytes = 0
+        try:
+            for entry in os.scandir(self.IMAGE_CACHE_DIR):
+                if entry.is_file():
+                    cache_files += 1
+                    cache_bytes += entry.stat().st_size
+        except OSError:
+            pass
+
+        metrics = self._last_render_metrics
+        error = self._last_render_error
+        font_status = "可用" if self._has_probable_cjk_font() else "未检测到"
+        browser_status = (
+            "已连接" if renderer_status["browser_connected"] else "未连接/待启动"
+        )
+        lines = [
+            "🩺 LaTeX Render 状态",
+            f"浏览器：{browser_status}",
+            f"MathJax：{'可用' if os.path.isfile(os.path.join(_PLUGIN_DIR, 'assets', 'mathjax-tex-svg.js')) else '缺失'}",
+            f"模板：{len(self._get_available_templates())} 个",
+            f"中文字体：{font_status}",
+            f"任务：运行 {self._active_renders} / 排队 {self._queued_renders}",
+            f"缓存：{cache_files} 个文件 / {cache_bytes / 1024 / 1024:.1f} MiB",
+        ]
+        if metrics:
+            lines.append(
+                "最近渲染："
+                f"{metrics.get('duration_seconds', '?')}s，"
+                f"{metrics.get('image_count', metrics.get('page_count', '?'))} 张，"
+                f"模板 {metrics.get('template', '?')}"
+            )
+        if error:
+            lines.append(
+                f"最后错误：{error.get('code', 'unknown')} - {error.get('message', '')}"
+            )
+        else:
+            lines.append("最后错误：无")
+        yield event.plain_result("\n".join(lines))
+
+    @staticmethod
+    def _has_probable_cjk_font() -> bool:
+        if platform.system() == "Windows":
+            font_dir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+            return any(
+                (font_dir / filename).is_file()
+                for filename in ("msyh.ttc", "msyh.ttf", "simsun.ttc", "simhei.ttf")
+            )
+        candidates = [
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
+            Path("/System/Library/Fonts/PingFang.ttc"),
+        ]
+        if any(path.is_file() for path in candidates):
+            return True
+        fc_list = shutil.which("fc-list")
+        if not fc_list:
+            return False
+        try:
+            probe = subprocess.run(
+                [fc_list, ":lang=zh"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+            return bool(probe.stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     # ==================== LLM 工具 ====================
 
     @filter.llm_tool(name="render_to_image")
@@ -1094,45 +2502,82 @@ body > * {{
         event: AstrMessageEvent,
         content: str = "",
         template: str = "",
+        layout: str = "",
     ):
-        """将完整文本内容渲染为图片并发送给用户。
+        """将 Markdown 与 LaTeX 内容渲染为一张或多张图片并发送给用户。
 
-        ⚠️ 调用前必须先在 content 中写好所有要展示的完整文本（整段回复），content 不可为空，否则会报错。
-        支持 Markdown 语法和 LaTeX 公式（$行内$ / $$行间$$）。
-
-        适用场景：讲解题目、展示数学公式/方程、制作表格、代码展示、结构化知识整理等。
+        适合讲题、公式推导、表格、代码和结构化长文；长内容默认自动分页。
 
         Args:
-            content(string): 必填，不可为空。将要渲染成图片的完整文本内容，直接写 Markdown + LaTeX 公式。不要包裹 <render> 标签或代码块。
-            template(string): 可选。已存在的模板名称，例如 classic 或 novel；不指定则使用用户默认模板。
+            content(string): 要渲染的完整 Markdown + LaTeX 文本，不要包裹 <render> 标签。
+            template(string): 可选。仅在用户明确指定样式时填写 classic、paper 或 custom；通常留空，沿用用户当前模板。
+            layout(string): 可选。auto 或 single；不指定则使用当前会话偏好，默认 auto。旧值 paged 按 auto 兼容。
         """
         if not content or not content.strip():
             yield "⚠️ 内容不能为空，请提供需要渲染的 Markdown 文本。"
             return
         user_id = self._get_user_id(event)
-        tpl = template.strip() if template and template.strip() else None
-
-        try:
-            image = await self._render_content(content, tpl, user_id, False)
-        except Exception as e:
-            logger.error(f"[HTML渲染] render_to_image 工具渲染失败: {e}")
-            yield f"渲染失败：{e}"
+        tpl = (
+            template.strip()
+            if template and template.strip()
+            else self._get_event_template(event)
+        )
+        effective_layout = self._normalize_layout_value(
+            layout if layout and layout.strip() else self._get_event_layout(event)
+        )
+        if effective_layout not in {"auto", "single"}:
+            yield "⚠️ layout 仅支持 auto 或 single。"
             return
 
-        if image:
+        try:
+            rendered = await self._render_for_layout(
+                content, tpl, user_id, False, effective_layout
+            )
+        except Exception as e:
+            logger.error(f"[HTML渲染] render_to_image 工具渲染失败: {e}")
+            yield self._format_render_failure(e)
+            return
+
+        images = self._extract_images(rendered)
+        warnings = self._extract_warnings(rendered)
+        if images:
             try:
-                if isinstance(image, list):
-                    await event.send(event.chain_result(image))
+                if len(images) == 1:
+                    await event.send(event.chain_result(images))
                 else:
-                    await event.send(event.chain_result([image]))
+                    for page_number, image in enumerate(images, start=1):
+                        try:
+                            await event.send(event.chain_result([image]))
+                        except Exception as exc:
+                            raise RenderFailure(
+                                "send_failed",
+                                f"第 {page_number}/{len(images)} 页发送失败；"
+                                f"此前已发送 {page_number - 1} 页",
+                            ) from exc
             except Exception as e:
                 logger.error(f"[HTML渲染] 图片已生成但发送失败: {e}")
-                yield "图片已生成，但发送失败，请检查消息平台连接后重试。"
+                if isinstance(e, RenderFailure) and e.code == "send_failed":
+                    yield e.message
+                    return
+                if len(images) > 1:
+                    yield (
+                        f"共生成 {len(images)} 页，但整组图片发送失败，"
+                        "请检查消息平台连接后重试。"
+                    )
+                else:
+                    yield "图片已生成，但发送失败，请检查消息平台连接后重试。"
                 return
             self._push_hidden_ctx(event, content)
-            yield "图片已渲染并发送给用户。可对图片内容进行简要解说。"
+            if len(images) == 1 and not warnings:
+                yield "图片已渲染并发送给用户。可对图片内容进行简要解说。"
+            else:
+                warning_text = f"；提示：{'；'.join(warnings)}" if warnings else ""
+                yield (
+                    f"内容已渲染为 {len(images)} 页并发送给用户{warning_text}。"
+                    "可对图片内容进行简要解说。"
+                )
         else:
-            yield "渲染失败，请检查内容格式后重试。"
+            yield "渲染失败：浏览器未生成图片。"
 
     # ==================== 隐藏上下文缓冲 ====================
 
@@ -1198,43 +2643,23 @@ body > * {{
     async def on_llm_req(self, event: AstrMessageEvent, req: ProviderRequest):
         inject_template_prompts = self.config.get("inject_template_prompts", False)
         if inject_template_prompts:
-            available_templates = self._get_available_templates()
-            if available_templates:
-                all_prompts = self.template_mgr.extract_all_builtin_prompts()
-                if all_prompts:
-                    user_id = self._get_user_id(event)
-                    current_template = self._get_default_template(user_id)
-
-                    prompt_sections = []
-                    prompt_sections.append("## 模板专属指令")
-                    prompt_sections.append(
-                        f"当前用户偏好的模板是: **{current_template}**"
+            req.extra_user_content_parts.append(
+                TextPart(
+                    text=(
+                        "<render_template_context>\n"
+                        "仅在调用 render_to_image 时参考：\n"
+                        "- classic：知识排版，适合推导、讲解、公式、表格和代码；"
+                        "使用标准 Markdown 与 LaTeX。\n"
+                        "- paper：纯白固定 A4，适合论文、报告和打印；"
+                        "使用标准 Markdown 与 LaTeX。\n"
+                        "- custom：用户在工作台保存的自定义模板；"
+                        "仅在用户明确要求时选用。\n"
+                        "用户未指定样式时省略 template，沿用其当前模板。\n"
+                        "</render_template_context>"
                     )
-                    prompt_sections.append("")
-
-                    for tpl_name, tpl_prompt in all_prompts.items():
-                        is_current = (
-                            " （当前用户偏好）" if tpl_name == current_template else ""
-                        )
-                        prompt_sections.append(
-                            f"### 模板「{tpl_name}」的专属指令{is_current}"
-                        )
-                        prompt_sections.append(tpl_prompt)
-                        prompt_sections.append("")
-
-                    builtin_block = "\n".join(prompt_sections)
-                    req.extra_user_content_parts.append(
-                        TextPart(
-                            text=(
-                                "<render_template_context>\n"
-                                f"{builtin_block}\n"
-                                "</render_template_context>"
-                            )
-                        ).mark_as_temp()
-                    )
-                    logger.info(
-                        f"[HTML渲染] 已注入 {len(all_prompts)} 个模板的内置提示词，当前偏好: {current_template}"
-                    )
+                ).mark_as_temp()
+            )
+            logger.info("[HTML渲染] 已注入精简模板提示")
 
         # 注入隐藏上下文缓冲（原文仅 LLM 可见，不在消息链中）
         self._inject_hidden_ctx(event, req)

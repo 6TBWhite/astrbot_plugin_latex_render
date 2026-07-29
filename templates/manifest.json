@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "templates": {
+    "classic": {
+      "display_name": "Classic 知识卡",
+      "description": "适合讲题、公式、代码与结构化知识。",
+      "scene": "knowledge",
+      "thumbnail": "dynamic",
+      "tags": ["步骤推导", "代码示例", "表格对比"],
+      "preferred_width": 600,
+      "themes": ["default"],
+      "css_variables": [
+        "classic_body_padding",
+        "classic_page_padding_y",
+        "classic_page_padding_x",
+        "classic_font_size",
+        "classic_line_height",
+        "classic_h1_size",
+        "classic_h2_size",
+        "classic_h3_size"
+      ]
+    },
+    "novel": {
+      "display_name": "Novel 小说页",
+      "description": "适合叙事、对白、场景与内心独白。",
+      "scene": "story",
+      "thumbnail": "dynamic",
+      "tags": ["对白分色", "内心独白", "章节叙事"],
+      "preferred_width": 600,
+      "themes": ["default"]
+    },
+    "paper": {
+      "display_name": "Paper A4 论文页",
+      "description": "纯白 A4 固定纸张，按 Markdown 语义块分页。",
+      "scene": "paper",
+      "thumbnail": "dynamic",
+      "tags": ["固定 A4", "等尺寸分页", "打印友好"],
+      "preferred_width": 794,
+      "themes": ["academic"],
+      "fixed_page": {
+        "width": 794,
+        "height": 1123,
+        "top_margin": 76,
+        "bottom_margin": 76,
+        "content_height": 971
+      },
+      "css_variables": [
+        "paper_margin_x",
+        "paper_margin_y",
+        "paper_font_size",
+        "paper_line_height",
+        "paper_h1_size",
+        "paper_h2_size",
+        "paper_h3_size"
+      ]
+    }
+  }
+}

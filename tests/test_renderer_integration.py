@@ -79,3 +79,74 @@ def test_real_chromium_covers_user_command_and_agent_tool(
         for image in probe_images
     }
     assert len(probe_hashes) >= 2
+
+
+def test_real_chromium_paginates_to_identical_a4_pages(plugin, plugin_main) -> None:
+    paragraphs = "\n\n".join(
+        f"## 第 {index} 节\n\n"
+        "这是一段用于验证 A4 固定纸张分页的正文。"
+        "页面必须保持相同尺寸，同时尽量在 Markdown 语义块边界换页。"
+        for index in range(1, 24)
+    )
+
+    async def render_paper():
+        try:
+            await plugin_main.init_browser()
+            return await plugin._render_content(
+                f"# 固定 A4 页面测试\n\n{paragraphs}",
+                "paper",
+                "user-1",
+                False,
+            )
+        finally:
+            await plugin_main.close_browser()
+
+    result = asyncio.run(render_paper())
+
+    assert result.template == "paper"
+    assert 2 <= len(result.images) <= 8
+    for image in result.images:
+        with PILImage.open(image.path) as rendered:
+            assert rendered.format == "JPEG"
+            assert rendered.size == (1588, 2246)
+            assert rendered.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_real_chromium_renders_distinct_aurora_custom_starter(
+    plugin,
+    plugin_main,
+    tmp_path,
+) -> None:
+    plugin.template_mgr = plugin_main.TemplateManager(
+        str(Path(__file__).resolve().parents[1] / "templates"),
+        str(tmp_path / "custom_templates"),
+    )
+    metadata = plugin.template_mgr.ensure_custom_slot()
+    plugin.template_mgr.update_template_id_map()
+
+    async def render_custom():
+        try:
+            await plugin_main.init_browser()
+            return await plugin._render_content(
+                "# Aurora 灵感\n\n"
+                "> 这是一张独立的深色 Custom 模板。\n\n"
+                "- 摘要\n- 公式 $a^2+b^2=c^2$\n\n"
+                "```python\nprint('custom')\n```",
+                "custom",
+                "user-1",
+                False,
+            )
+        finally:
+            await plugin_main.close_browser()
+
+    result = asyncio.run(render_custom())
+
+    assert metadata["display_name"] == "Aurora 灵感卡"
+    assert result.template == "custom"
+    assert len(result.images) == 1
+    with PILImage.open(result.images[0].path) as rendered:
+        assert rendered.format == "JPEG"
+        assert rendered.width == 1200
+        assert rendered.height >= 500
+        mean = ImageStat.Stat(rendered.convert("RGB")).mean
+        assert sum(mean) / len(mean) < 110
