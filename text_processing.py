@@ -3,7 +3,7 @@
 
 import html as html_lib
 import re
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from astrbot.api import logger
 
@@ -26,10 +26,14 @@ _INLINE_MATH_PATTERNS = [
     re.compile(r"\\\(.+?\\\)"),
 ]
 
+
 def _make_placeholder(prefix: str, index: int) -> str:
     return f"{prefix}{index}END"
 
-def _protect_segments(text: str, patterns: List[re.Pattern], prefix: str) -> Tuple[str, List[str]]:
+
+def _protect_segments(
+    text: str, patterns: List[re.Pattern], prefix: str
+) -> Tuple[str, List[str]]:
     segments: List[str] = []
 
     def _replace(match: re.Match) -> str:
@@ -41,13 +45,16 @@ def _protect_segments(text: str, patterns: List[re.Pattern], prefix: str) -> Tup
 
     return text, segments
 
+
 def _restore_segments(text: str, segments: List[str], prefix: str) -> str:
     for idx, segment in enumerate(segments):
         text = text.replace(_make_placeholder(prefix, idx), segment)
     return text
 
+
 def _escape_math_fragment(fragment: str) -> str:
     return html_lib.escape(fragment, quote=False)
+
 
 def _strip_display_delimiters(matched: str) -> str:
     r"""Strip display-math delimiters ($$…$$ or \[…\]), keeping inner LaTeX.
@@ -60,11 +67,13 @@ def _strip_display_delimiters(matched: str) -> str:
         return matched[2:-2]
     return matched
 
+
 def _strip_inline_delimiters(matched: str) -> str:
     r"""Strip inline-math delimiters ($…$ or \(…\)), keeping inner LaTeX."""
     if matched.startswith("\\("):
         return matched[2:-2]
     return matched[1:-1]
+
 
 def _prepare_math_for_markdown(text: str) -> Tuple[str, List[str]]:
     """
@@ -91,13 +100,16 @@ def _prepare_math_for_markdown(text: str) -> Tuple[str, List[str]]:
         inline_math_segments.append(
             f'<span class="astr-math-inline">\\({_escape_math_fragment(_strip_inline_delimiters(match.group(0)))}\\)</span>'
         )
-        return _make_placeholder(_INLINE_MATH_TOKEN_PREFIX, len(inline_math_segments) - 1)
+        return _make_placeholder(
+            _INLINE_MATH_TOKEN_PREFIX, len(inline_math_segments) - 1
+        )
 
     for pattern in _INLINE_MATH_PATTERNS:
         text = pattern.sub(_replace_inline_math, text)
 
     text = _restore_segments(text, code_segments, _CODE_TOKEN_PREFIX)
     return text, inline_math_segments
+
 
 try:
     import mistune
@@ -135,6 +147,7 @@ except ImportError:
 
 # ==================== 文本检测 ====================
 
+
 def contains_math(text: str) -> bool:
     """Detect common LaTeX/math delimiters outside code blocks."""
     if not text:
@@ -148,7 +161,9 @@ def contains_math(text: str) -> bool:
         for pattern in (_DISPLAY_MATH_PATTERN, *_INLINE_MATH_PATTERNS)
     )
 
+
 # ==================== 换行与格式处理 ====================
+
 
 def preserve_newlines(text: str) -> str:
     """
@@ -184,6 +199,7 @@ def preserve_newlines(text: str) -> str:
     else:
         return text
 
+
 def nl2br(html: str) -> str:
     """
     统一换行处理：保留空行（\\n\\n → <br><br>），
@@ -206,12 +222,8 @@ def nl2br(html: str) -> str:
     html = re.sub(
         r"<script\b[^>]*>[\s\S]*?</script>", _protect, html, flags=re.IGNORECASE
     )
-    html = re.sub(
-        r"<pre\b[^>]*>[\s\S]*?</pre>", _protect, html, flags=re.IGNORECASE
-    )
-    html = re.sub(
-        r"<code\b[^>]*>[\s\S]*?</code>", _protect, html, flags=re.IGNORECASE
-    )
+    html = re.sub(r"<pre\b[^>]*>[\s\S]*?</pre>", _protect, html, flags=re.IGNORECASE)
+    html = re.sub(r"<code\b[^>]*>[\s\S]*?</code>", _protect, html, flags=re.IGNORECASE)
 
     # 消除标签间单行缩进换行
     html = re.sub(r">[ \t]*\n[ \t]*<", "><", html)
@@ -243,7 +255,9 @@ def nl2br(html: str) -> str:
 
     return result
 
+
 # ==================== Markdown / 表格 转换 ====================
+
 
 def markdown_to_html(text: str) -> str:
     """将 Markdown 转换为 HTML"""
@@ -265,6 +279,7 @@ def markdown_to_html(text: str) -> str:
         logger.error(traceback.format_exc())
         return preserve_newlines(text)
 
+
 def convert_markdown_tables(text: str) -> str:
     """
     将 Markdown 表格转换为 HTML 表格（用于混合内容场景）。
@@ -280,9 +295,7 @@ def convert_markdown_tables(text: str) -> str:
 
         if "|" in line and i + 1 < len(lines):
             next_line = lines[i + 1]
-            if re.match(
-                r"^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$", next_line
-            ):
+            if re.match(r"^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$", next_line):
                 table_lines = [line, next_line]
                 i += 2
                 while i < len(lines) and "|" in lines[i]:
@@ -298,6 +311,7 @@ def convert_markdown_tables(text: str) -> str:
         i += 1
 
     return "\n".join(result)
+
 
 def _parse_markdown_table(lines: List[str]) -> str:
     """解析 Markdown 表格并生成 HTML"""

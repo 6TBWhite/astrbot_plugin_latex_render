@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.ruff_cache/
 
 # Virtual env (optional)
 .venv/
@@ -21,3 +23,6 @@ test_variable.md
 
 # 备份目录
 _workspace_backup/
+
+# 在插件目录独立运行 AstrBot 模块时产生的框架数据
+/data/

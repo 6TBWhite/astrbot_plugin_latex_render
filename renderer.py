@@ -52,9 +52,11 @@ def _get_font_mime(path: str) -> str:
         ".otf": "font/otf",
     }.get(ext, "application/octet-stream")
 
+
 # GIF 合成支持
 try:
     from PIL import Image as PILImage, ImageChops
+
     GIF_AVAILABLE = True
 except ImportError:
     GIF_AVAILABLE = False
@@ -76,16 +78,33 @@ async def init_browser():
     global _playwright_instance, _browser_instance
     async with _browser_lock:
         if _browser_instance is not None:
-            return
+            try:
+                if _browser_instance.is_connected():
+                    return
+            except Exception:
+                pass
+            try:
+                await _browser_instance.close()
+            except Exception:
+                pass
+            _browser_instance = None
+
         try:
             from playwright.async_api import async_playwright
-            _playwright_instance = await async_playwright().start()
+
+            if _playwright_instance is None:
+                _playwright_instance = await async_playwright().start()
             _browser_instance = await _playwright_instance.chromium.launch()
             logger.info("[HTML渲染] 浏览器实例已启动（复用模式）")
         except Exception as e:
-            logger.error(f"[HTML渲染] 浏览器实例启动失败: {e}")
+            if _playwright_instance is not None:
+                try:
+                    await _playwright_instance.stop()
+                except Exception:
+                    pass
             _playwright_instance = None
             _browser_instance = None
+            raise RuntimeError(f"Playwright 浏览器实例启动失败: {e}") from e
 
 
 async def close_browser():
@@ -116,6 +135,7 @@ async def _get_browser():
 
 
 # ==================== 动画区域检测 ====================
+
 
 async def _measure_capture_height(page) -> int:
     """Measure a conservative capture height so the last line is not clipped."""
@@ -260,12 +280,12 @@ async def _detect_animated_region(
             ratio = clip_area / page_area
 
             if ratio > 0.8:
-                logger.info(f"[GIF] 动画容器占页面 {ratio*100:.0f}%，不裁切")
+                logger.info(f"[GIF] 动画容器占页面 {ratio * 100:.0f}%，不裁切")
                 return None
 
             logger.info(
                 f"[GIF] JS定位动画容器: {clip['width']:.0f}×{clip['height']:.0f} CSS px "
-                f"(占比 {ratio*100:.1f}%)"
+                f"(占比 {ratio * 100:.1f}%)"
             )
             return clip
 
@@ -309,7 +329,7 @@ async def _detect_animated_region(
                 ratio = region_w * region_h / page_area
 
                 if ratio > 0.8:
-                    logger.info(f"[GIF] 像素变化区域占页面 {ratio*100:.0f}%，不裁切")
+                    logger.info(f"[GIF] 像素变化区域占页面 {ratio * 100:.0f}%，不裁切")
                     return None
 
                 pad = int(30 * scale)
@@ -353,6 +373,7 @@ async def _get_animation_duration(page) -> float:
 
 # ==================== 主渲染函数 ====================
 
+
 async def html_to_image_playwright(
     html_content: str,
     output_image_path: str,
@@ -368,6 +389,7 @@ async def html_to_image_playwright(
     GIF 模式使用时间轴跳帧：暂停动画 → seek到每帧时间点 → 截图，零等待。
     """
     import time as _time
+
     _t_start = _time.perf_counter()
 
     page = None
@@ -377,8 +399,13 @@ async def html_to_image_playwright(
         if browser is None:
             logger.error("[HTML渲染] 无法获取浏览器实例，回退到独立模式")
             return await _fallback_render(
-                html_content, output_image_path, scale, width,
-                is_gif, duration, fps,
+                html_content,
+                output_image_path,
+                scale,
+                width,
+                is_gif,
+                duration,
+                fps,
             )
 
         context = await browser.new_context(
@@ -426,7 +453,9 @@ async def html_to_image_playwright(
         full_height = await _prepare_page_for_capture(page, width)
 
         _t_content = _time.perf_counter()
-        logger.debug(f"[性能] 页面创建: {_t_page - _t_start:.3f}s, 内容加载: {_t_content - _t_page:.3f}s")
+        logger.debug(
+            f"[性能] 页面创建: {_t_page - _t_start:.3f}s, 内容加载: {_t_content - _t_page:.3f}s"
+        )
 
         if not is_gif:
             # 使用 JPEG 格式：体积远小于 PNG，截图速度更快
@@ -470,7 +499,9 @@ async def html_to_image_playwright(
                     )
 
                     # 暂停所有动画
-                    await page.evaluate("document.getAnimations().forEach(a => a.pause())")
+                    await page.evaluate(
+                        "document.getAnimations().forEach(a => a.pause())"
+                    )
 
                     frames = []
                     record_start = _time.perf_counter()
@@ -485,15 +516,23 @@ async def html_to_image_playwright(
                         frame_bytes = await page.screenshot(
                             clip=clip, type="jpeg", quality=85
                         )
-                        frame_img = PILImage.open(io.BytesIO(frame_bytes)).convert("RGB")
-                        frame_img = frame_img.convert("P", palette=PILImage.ADAPTIVE, colors=256)
+                        frame_img = PILImage.open(io.BytesIO(frame_bytes)).convert(
+                            "RGB"
+                        )
+                        frame_img = frame_img.convert(
+                            "P", palette=PILImage.ADAPTIVE, colors=256
+                        )
                         frames.append(frame_img)
 
                     # 恢复播放
-                    await page.evaluate("document.getAnimations().forEach(a => a.play())")
+                    await page.evaluate(
+                        "document.getAnimations().forEach(a => a.play())"
+                    )
 
                     record_time = _time.perf_counter() - record_start
-                    logger.info(f"[GIF] 跳帧完成：{len(frames)}帧，耗时{record_time:.1f}s")
+                    logger.info(
+                        f"[GIF] 跳帧完成：{len(frames)}帧，耗时{record_time:.1f}s"
+                    )
 
                     out_dir = os.path.dirname(output_image_path)
                     if out_dir:
@@ -523,6 +562,7 @@ async def html_to_image_playwright(
     except Exception as e:
         logger.error(f"Playwright 渲染失败: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
 
         # 浏览器可能已崩溃，重置实例

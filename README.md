@@ -1,214 +1,294 @@
-# AstrBot_Plugin LaTeX Render 
+<div align="center">
+  <img src="logo.png" width="88" alt="LaTeX Render Logo" />
+  <h1>LaTeX Render</h1>
+  <p><strong>让 LLM 把公式、表格与长讲解直接排成一张好读的图。</strong></p>
+  <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，用户也可以通过命令切换和预览模板。</p>
+  <p>
+    <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
+    <a href="https://github.com/6TBWhite/astrbot_plugin_latex_render/releases"><img src="https://img.shields.io/badge/release-v1.0.3-7357D9?style=flat-square" alt="Release v1.0.3" /></a>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F855A?style=flat-square" alt="MIT License" /></a>
+  </p>
+  <p>
+    <a href="#产品定位">产品定位</a> ·
+    <a href="#核心能力">核心能力</a> ·
+    <a href="#安装与启用">安装使用</a> ·
+    <a href="#模板与命令">模板与命令</a> ·
+    <a href="#问题排查">问题排查</a> ·
+    <a href="CHANGELOG.md">版本变化</a>
+  </p>
+</div>
 
-[![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-blue)](https://github.com/Soulter/AstrBot)
-[![Python](https://img.shields.io/badge/Python-3.9+-green)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+## 产品定位
 
-> 本项目为 vibe coding 产物
+普通文本回复很适合短回答，却不擅长承载长公式、复杂表格和需要稳定版式的讲解。LaTeX Render 给 AstrBot 增加一个 `render_to_image` 工具：LLM 先写完整内容，插件再把 Markdown、LaTeX 和模板样式交给本地 Chromium，最后只把生成的图片发送到当前会话。
 
-LLM 主动调用的图片渲染工具，支持文本、Markdown、LaTeX 公式渲染为图片。基于 LLM 工具调用架构，AI 自行决定何时出图、选用何种模板。本项目灵感来源于 [lumingya/astrbot_plugin_html_render](https://github.com/lumingya/astrbot_plugin_html_render)（MIT 协议）。
+插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-## 功能一览
+当前稳定版本为 `1.0.3`，要求 AstrBot `>=4.26.3`。
 
-- **LLM Agent 工具**：AI 通过 `render_to_image` 工具主动发图，告别标签拦截模式
-- **双内置模板**：`classic` 用于讲题排版，`novel` 用于小说叙事
-- **Markdown + LaTeX 公式**：支持标准语法，前端 MathJax 离线渲染
-- **全局原文本缓冲区**（实验性功能，未充分测试）：可选开启，图片渲染后原文本将会持续注入回上下文。
+## 核心能力
 
-## 安装
+| 能力 | 带来的体验 | 默认边界 |
+| --- | --- | --- |
+| LLM 主动出图 | Agent 可调用 `render_to_image`，把整段回复一次排成图片 | 不拦截普通消息，不强制所有回答转图 |
+| Markdown 排版 | 支持标题、列表、引用、代码块、删除线和表格 | Markdown 可在 WebUI 中关闭 |
+| LaTeX 公式 | 支持 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和常见环境 | MathJax 使用随插件提供的本地副本 |
+| 双内置模板 | `classic` 适合讲题与知识整理，`novel` 适合叙事和对白 | 模板必须位于 `templates/`，且至少保留一个 |
+| 用户模板偏好 | 用户可切换自己的默认模板，也可临时预览其他模板 | 偏好保存在当前插件进程内，重载后恢复全局默认 |
+| 本地渲染 | 内容由 Playwright / Chromium 在 AstrBot 主机上生成 | 首次使用需要浏览器二进制和 Linux 系统库 |
+| 临时原文上下文 | 可选地让 LLM 在后续轮次核对已经发成图片的原文 | 实验性、默认关闭，按完整会话隔离 |
 
-### 1. 获取插件
+## 渲染流程
 
-如果插件已发布到 AstrBot 插件市场，您可以直接从市场安装。
-
-如果从仓库获取，请打开插件 GitHub 仓库页面，点击绿色的 `Code` 按钮，选择 `Download ZIP` 下载源代码压缩包。下载完成后，在 AstrBot 管理面板中前往「插件」→「安装插件」→「从文件安装」，选择该 `.zip` 文件上传即可。
-
-### 2. 依赖项
-
-本插件依赖以下 Python 库：
-
-- `playwright` — 浏览器自动化引擎
-- `aiohttp` — 异步 HTTP 客户端
-- `mistune` — Markdown 解析器
-- `Pillow` — 图像处理库
-
-AstrBot 通常会在插件安装时自动安装以上依赖。如果自动安装失败，请手动运行：
-
-```bash
-pip install -r requirements.txt
-playwright install chromium-headless-shell
+```mermaid
+flowchart LR
+    A["LLM 工具或用户命令"] --> B["Markdown / LaTeX 处理"]
+    B --> C["classic / novel 模板"]
+    C --> D["本地 Chromium 截图"]
+    D --> E["发送图片并延迟清理缓存"]
 ```
 
-### 3. 配置文件
+渲染缓存和 Playwright 浏览器默认写入：
 
-插件根目录包含以下配置文件，无需手动创建：
+```text
+data/plugin_data/astrbot_plugin_latex_render/
+├── latex_cache/
+└── playwright_browsers/
+```
 
-| 文件 | 说明 |
-|------|------|
-| `_conf_schema.json` | 插件配置定义，用于 WebUI 配置面板 |
-| `metadata.yaml` | 插件元数据（名称、作者、版本等） |
+插件不会把运行数据写回源码目录，因此更新或重装插件时不会把缓存和浏览器文件混进插件包。
 
-### 4. 重载/重启 AstrBot
+## 安装与启用
 
-安装或更新插件后，在 AstrBot WebUI 中找到本插件并点击"重载插件"，或直接重启 AstrBot 服务，即可使更改生效。
+### 安装
 
-插件初始化时会自动创建模板目录和缓存目录。
+推荐在 AstrBot WebUI 的插件市场中搜索“LaTeX / Markdown 图片渲染”并安装。若暂未检索到，可从 [GitHub Releases](https://github.com/6TBWhite/astrbot_plugin_latex_render/releases) 下载 ZIP，再进入“AstrBot 插件 → 安装插件 → 从文件安装”上传。
+
+也可以在支持仓库地址安装的界面中使用：
+
+```text
+https://github.com/6TBWhite/astrbot_plugin_latex_render
+```
+
+安装或更新后，请重载插件或重启 AstrBot。
+
+### 依赖分工
+
+别把 `pip install` 成功当成万事大吉，Playwright 偏偏还带着浏览器和系统库两位不肯住进 `requirements.txt` 的祖宗。
+
+| 依赖 | 默认处理方式 | 是否可能需要手动安装 |
+| --- | --- | --- |
+| `playwright`、`mistune`、`Pillow` | AstrBot 根据 `requirements.txt` 自动安装 | 仅在 AstrBot 自动安装失败时 |
+| Chromium headless shell | 插件首次启动时自动下载到插件数据目录 | 网络受限、无写入权限或自动下载失败时 |
+| Chromium 系统库 | Python 包和插件都不会替你取得 root 权限 | **Linux / Docker 精简镜像通常必须手动安装** |
+| CJK 中文字体 | 使用宿主机已有字体 | **裸 Linux / 精简容器通常必须手动安装** |
+
+### 必看：不会自动安装的项目
+
+#### 1. Linux 的 Chromium 系统库
+
+插件不会、也不应该在启动时调用 `sudo`。Debian / Ubuntu 及受支持的 Linux 环境中，请在 AstrBot 使用的同一 Python 环境里执行：
+
+```bash
+sudo python -m playwright install-deps chromium
+```
+
+Docker 部署请进入 AstrBot 容器，并以具备包管理权限的用户执行。命令来自 [Playwright 官方浏览器安装说明](https://playwright.dev/python/docs/browsers#install-system-dependencies)。
+
+#### 2. Linux 的中文字体
+
+裸 Linux 和精简容器常常没有 CJK 字体，缺少时中文会显示为方块。
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update
+sudo apt-get install -y fonts-noto-cjk fonts-noto-cjk-extra
+
+# CentOS / RHEL
+sudo yum install -y google-noto-sans-cjk-ttc google-noto-serif-cjk-ttc
+
+# Fedora 或较新的 RHEL
+sudo dnf install -y google-noto-sans-cjk-fonts google-noto-serif-cjk-fonts
+```
+
+验证：
+
+```bash
+fc-list :lang=zh | head
+```
+
+能够列出 `.ttc` 或 `.otf` 文件才算装好。插件不会自动检测或安装系统字体。
+
+#### 3. 自动下载 Chromium 失败时
+
+启动日志会打印插件实际使用的 `Playwright 浏览器路径`。手动安装时必须把 `PLAYWRIGHT_BROWSERS_PATH` 指向同一路径，否则浏览器会装进系统缓存，而插件仍旧一本正经地说没看见。
+
+Linux / macOS：
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH="/你的/AstrBot/data/plugin_data/astrbot_plugin_latex_render/playwright_browsers"
+python -m playwright install chromium-headless-shell
+```
+
+Windows PowerShell：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = "C:\你的\AstrBot\data\plugin_data\astrbot_plugin_latex_render\playwright_browsers"
+python -m playwright install chromium-headless-shell
+```
+
+如果 AstrBot 没有自动安装 Python 库，再在插件目录执行：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+代理环境下可在安装前设置 `HTTPS_PROXY`；具体写法见 [Playwright 官方代理说明](https://playwright.dev/python/docs/browsers#install-behind-a-firewall-or-a-proxy)。
+
+## 首次使用
+
+1. 重载插件，确认日志出现“浏览器实例已启动”和“插件初始化完成”。
+2. 发送 `/测试`，使用默认内容检查 Markdown、代码块和公式。
+3. 发送 `/查看` 查看模板，再用 `/切换 classic` 或 `/切换 novel` 设置偏好。
+4. 在 Agent 对话中明确要求“把完整讲解渲染成图片”，检查 `render_to_image` 工具调用。
+
+首次启动需要下载数百 MB 的 Chromium headless shell，耗时取决于网络。下载完成后会复用插件数据目录中的浏览器文件。
 
 ## 配置
 
-所有配置项均可在 WebUI 插件面板中修改。
+以下配置均可在 AstrBot WebUI 修改，并与 `_conf_schema.json` 保持一致。
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| **基础** | | | |
-| `default_template` | string | `""` | 默认模板名（留空用第一个可用） |
-| `inject_template_prompts` | bool | `false` | 是否在 LLM 请求时注入模板独有指令 |
-| **渲染** | | | |
-| `render_width` | int | `600` | 画布宽度（px） |
-| `render_scale` | int | `2` | 分辨率倍数，越高越清晰 |
-| `enable_markdown` | bool | `true` | 启用 Markdown 语法解析 |
-| `enable_math` | bool | `true` | 启用 LaTeX 数学公式渲染 |
-| **经典模板** | | | |
-| `classic_body_padding` | int | `18` | 外圈绿色边距（px） |
-| `classic_page_padding_y` | int | `32` | 画布上下内边距（px） |
-| `classic_page_padding_x` | int | `28` | 画布左右内边距（px） |
-| `classic_font_size` | int | `22` | 正文字号（px） |
-| `classic_line_height` | float | `1.8` | 行高 |
-| `classic_h1_size` | int | `31` | h1 字号（px） |
-| `classic_h2_size` | int | `26` | h2 字号（px） |
-| `classic_h3_size` | int | `23` | h3 字号（px） |
-| **实验性功能** | | | |
-| `enable_hidden_ctx_buffer` | bool | `false` | 独立缓冲区：发图后把原文摘要注入上下文，仅推荐需在对话超过上下文长度设置后仍需引用图片内容的用户开启 |
+| 配置项 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `default_template` | `""` | 全局默认模板；留空时使用第一个可用模板 |
+| `render_width` | `600` | 渲染宽度，单位 px |
+| `render_scale` | `2` | 设备缩放倍数；越高越清晰，也越耗内存 |
+| `enable_markdown` | `true` | 启用 Markdown 解析 |
+| `enable_math` | `true` | 启用 LaTeX / MathJax 渲染 |
+| `classic_body_padding` | `18` | `classic` 外圈边距 |
+| `classic_page_padding_y` | `32` | `classic` 画布上下内边距 |
+| `classic_page_padding_x` | `28` | `classic` 画布左右内边距 |
+| `classic_font_size` | `22` | `classic` 正文字号 |
+| `classic_line_height` | `1.8` | `classic` 正文行高 |
+| `classic_h1_size` | `31` | `classic` 一级标题字号 |
+| `classic_h2_size` | `26` | `classic` 二级标题字号 |
+| `classic_h3_size` | `23` | `classic` 三级标题字号 |
+| `inject_template_prompts` | `false` | 向本轮 LLM 请求提供模板格式提示 |
+| `enable_hidden_ctx_buffer` | `false` | 临时注入最近三条已渲染原文；实验性功能 |
 
-## 使用方式
+## 模板与命令
 
-### LLM 工具（主路径）
+### LLM 工具
 
-Agent发现用户需要讲解、列公式、画表格或者用户主动要求时，可调用 `render_to_image`工具将整段讲解过程（包含文字与公式）渲染为图片：
+`render_to_image` 接收完整 Markdown / LaTeX 内容：
 
-```
+```text
 render_to_image(
-  content="## 勾股定理\n设直角三角形两直角边为 $a$、$b$，斜边为 $c$，则\n$$a^2 + b^2 = c^2$$",
+  content="## 勾股定理\n设两直角边为 $a$、$b$，斜边为 $c$：\n$$a^2+b^2=c^2$$",
   template="classic"
 )
 ```
 
 | 参数 | 必填 | 说明 |
-|------|------|------|
-| `content` | ✅ | Markdown / LaTeX 内容，不要包裹 `<render>` 标签 |
-| `template` | ❌ | `classic` 或 `novel`，留空用默认模板 |
+| --- | --- | --- |
+| `content` | 是 | 要渲染的完整内容，不要再包 `<render>` 标签 |
+| `template` | 否 | `classic`、`novel` 或其他已有模板名；留空使用用户默认 |
 
 ### 用户命令
 
-| 命令 | 别名 | 用法 |
-|------|------|------|
-| `/测试 <文本>` | `/test` | 测试当前模板渲染效果 |
-| `/切换 <名或ID>` | `/switch` | 切换自己的默认模板 |
-| `/查看` | `/templates` | 查看可用模板列表 |
-| `/预览模板 <名或ID> [文本]` | `/previewtpl` | 临时预览指定模板，不改默认设置 |
-| `/探针gif` | `/probegif` | 渲染一张 GIF 测试功能 |
+| 命令 | 英文别名 | 功能 |
+| --- | --- | --- |
+| `/测试 [文本]` | `/test` | 渲染输入文本；不填时使用内置测试内容 |
+| `/切换 <名称或 ID>` | `/switch` | 切换当前用户的默认模板 |
+| `/查看` | `/templates` | 查看模板列表与当前模板 |
+| `/预览模板 <名称或 ID> [文本]` | `/previewtpl`、`/tplpreview` | 临时预览，不修改默认模板 |
+| `/探针gif` | `/probegif` | 输出三帧诊断截图；这是排障命令，不是 GIF 产品功能 |
 
-## 模板指南
+### `classic`
 
-### classic — 经典讲题排版
+适合讲题、结构化知识、公式、代码和表格。绿色外框与浅色画布针对聊天窗口阅读优化，正文、标题、行高和边距均可在 WebUI 调整。
 
-结构化知识呈现首选。绿色外框 + 米色画布，版心经过手机端调优，9 项视觉参数全部配置化，可以直接在 WebUI 面板调，不用改代码。
+### `novel`
 
-示例渲染内容：多标题层级、行内公式、块级公式、有序列表、代码块。
+适合叙事、对白和场景描写，额外支持：
 
-### novel — 小说风格模板
+| 标签 | 用途 |
+| --- | --- |
+| `<q>` | 对话台词 |
+| `<inner>` | 内心独白 |
+| `<act>` | 动作描写 |
+| `<scene>` | 场景描写 |
+| `<aside>` | 旁白 |
 
-叙事、故事、对话场景专用，支持 5 个语义标签：
+自定义模板放入 `templates/`，文件扩展名必须为 `.html`，并保留 `{{content}}` 占位符。模板使用 UTF-8 编码；目录为空时插件会拒绝带病启动。
 
-| 标签 | 用途 | 样式 |
-|------|------|------|
-| `<q>` | 对话台词 | 棕色背景 + 引号 |
-| `<inner>` | 内心独白 | 灰色斜体 + 括号 |
-| `<act>` | 动作描写 | 灰色斜体 + 虚线下划线 |
-| `<scene>` | 场景描写 | 左侧边框 + 淡绿色背景 |
-| `<aside>` | 旁白叙述 | 居中灰色小字 |
+## 字体与外部资源
 
-### 更多模板
+内置模板只声明思源黑体、思源宋体、苹方、微软雅黑、宋体等系统字体，不携带字体文件，也不依赖 Google Fonts。渲染效果由宿主机实际安装的字体决定。
 
-如需更多模板，可参考上游项目的 [templates 目录](https://github.com/lumingya/astrbot_plugin_html_render/tree/main/templates)。
+Playwright 会阻断 Google Fonts 请求以避免渲染被外网拖住。自定义模板若需要固定字体，请把 `.woff2` 等文件随插件部署，并通过本地路径引用；仅写在线字体 URL 会回退到后备系统字体。
 
-## 待开发功能
-
-有原型，本插件暂未开放使用：
-
-- **GIF 录制**（待开发）：通过 Playwright 截图序列合成 CSS 动效 GIF，可在 WebUI 中配置录制时长、帧率和分辨率倍数
-- **自定义背景图**（待开发）：支持氛围背景和正文水印两种渲染模式，提供固定、轮询、随机三种切换策略，透明度可调
-
-## 注意事项
-
-- 模板用 UTF-8 编码保存
-- MathJax 使用本地副本渲染（`mathjax-tex-svg.js`），无需联网
-- `templates` 目录不能为空，否则渲染会直接报错
-
-### 字体说明（v1.0.1+ 体积优化）
-
-本插件内置模板（`classic`、`novel`）只使用系统字体名（思源黑体、思源宋体、苹方、微软雅黑、宋体等），不依赖任何 Google Fonts 在线字体。渲染时由 Playwright/Chromium 调用宿主系统已安装的字体完成排版。
-
-早期版本曾内置 8 套 Google Fonts 字体文件（`fonts/` 目录，约 15.9 MB），但这些字体不会被内置模板加载，只会被用户自定义的、通过 `fonts.gstatic.com` URL 引用字体的 HTML 模板用到。为减小插件体积，自 v1.0.1 起 **不再内置字体文件**，`fonts/` 目录已移除。
-
-**对你有什么影响：**
-
-- 使用内置 `classic` / `novel` 模板：**无任何影响**，渲染效果取决于宿主系统是否装了对应的中文字体（大多数桌面环境都自带）。
-- 自定义模板中用 `@font-face` 指向 Google Fonts 的：Playwright 的路由拦截（`renderer.py`）会 abort 这些请求，页面将回退到 CSS 中声明的 `font-family` 后备系统字体。若你的自定义模板强依赖某种在线字体，请自行把对应的 `.woff2` 文件放到模板能访问的位置，并在模板里用相对路径 `@font-face` 引用。
-
-> 想恢复内置字体的话，只需重新放回 `fonts/` 目录并保留 `manifest.json`（URL → 本地路径映射），`renderer.py` 的字体路由逻辑会自动识别。
-
-### Linux 服务器字体要求
-
-内置模板的 `font-family` 声明了一串系统字体名（思源黑体、思源宋体、苹方、微软雅黑、宋体等），渲染时由 Playwright/Chromium 调用**宿主系统已安装**的字体完成排版。Windows / macOS 自带中文字体，无需额外处理；但**裸 Linux 服务器默认不装 CJK 字体**，中文会渲染成豆腐块 □□□。
-
-**解决方法**（装完无需重启 AstrBot，下次渲染自动生效）：
-
-```bash
-# Ubuntu / Debian
-sudo apt install fonts-noto-cjk fonts-noto-cjk-extra
-
-# CentOS / RHEL / Fedora
-sudo yum install google-noto-sans-cjk-ttc google-noto-serif-cjk-ttc
-# 或（较新版本）
-sudo dnf install google-noto-sans-cjk-fonts google-noto-serif-cjk-fonts
-```
-
-验证是否安装成功：
-
-```bash
-fc-list :lang=zh | head
-# 应输出若干 .ttc / .otf 路径，说明系统中已有可用中文字体
-```
-
-> ⚠️ 插件不会主动检测或安装系统字体。若渲染结果出现方块/缺字，请先在宿主机上按上面命令装好 CJK 字体，再重新渲染验证。
+MathJax 使用仓库内的 `mathjax-tex-svg.js`，正常渲染无需连接 CDN。
 
 ## 问题排查
 
-### AstrBot 更新/降级后渲染失败（Chromium 浏览器丢失）
+### 日志提示找不到 Chromium
 
-**现象**：AstrBot 更新或降级后，LaTeX 渲染插件报错，日志中出现 `playwright` 或 `chromium` 相关错误。
+1. 找到启动日志中的 `Playwright 浏览器路径`。
+2. 按“自动下载 Chromium 失败时”设置同一个 `PLAYWRIGHT_BROWSERS_PATH`。
+3. 在 AstrBot 的 Python 环境中重新安装 headless shell。
+4. Linux 再执行 `python -m playwright install-deps chromium`。
 
-**原因**：Playwright 的 Chromium 浏览器二进制默认安装在系统缓存目录（Windows: `%LOCALAPPDATA%\ms-playwright\`），而 AstrBot 的自动备份/恢复机制仅覆盖 `data/` 和 `venv/` 目录。更新/降级时，系统缓存中的浏览器文件不会被保留。
+AstrBot 更新后无需删除浏览器目录；插件把它放在 `data/plugin_data` 下，就是为了随数据备份保留。
 
-**本插件已内置修复**（v1.0.0+）：插件初始化时将 `PLAYWRIGHT_BROWSERS_PATH` 设置为 AstrBot 数据目录下的 `data/plugin_data/astrbot_plugin_latex_render/playwright_browsers/`，Chromium 从此随 AstrBot 备份一起保留。
+### 中文显示成方块
 
-**v1.0.2 优化**：插件只用 headless 模式渲染，现在仅安装 `chromium-headless-shell`（~270MB）而非完整 Chromium（~415MB），磁盘占用减半。检测到已存在则跳过安装。
+运行 `fc-list :lang=zh | head`。没有输出就安装 Noto CJK 字体；有输出仍异常时，检查自定义模板的 `font-family` 是否只写了宿主机不存在的字体。
 
-如果你仍遇到此问题，可能是旧版插件的残留浏览器尚未迁移：
+### 公式没有渲染
 
-```bash
-# 进入 AstrBot venv 所在目录，删除旧缓存后重新安装
-rmdir /s /q "%LOCALAPPDATA%\ms-playwright"
-# 重启 AstrBot，插件会自动在新路径下安装 Chromium headless shell（首次 ~270MB）
+- 确认 `enable_math = true`。
+- 使用受支持的分隔符：`$...$`、`$$...$$`、`\(...\)` 或 `\[...\]`。
+- 查看日志是否成功加载本地 `mathjax-tex-svg.js`。
+- 不要把公式放进代码块；代码块中的 `$...$` 会按普通代码保留。
+
+### 图片底部被截断或渲染失败
+
+- 先把 `render_scale` 调回 `2`，避免超大图片耗尽内存。
+- 用 `/测试` 排除自定义内容和模板问题。
+- 确认 `templates/` 至少有一个包含 `{{content}}` 的 HTML 文件。
+- 若只有自定义模板失败，先移除脚本、远程资源和异常 CSS 再逐项恢复。
+
+## 项目结构
+
+```text
+astrbot_plugin_latex_render/
+├── main.py                 生命周期、命令、LLM 工具与模板选择
+├── renderer.py             Playwright 浏览器复用、截图与 GIF 原型
+├── text_processing.py      Markdown、LaTeX 保护与换行处理
+├── template_manager.py     模板发现、读取与内置提示提取
+├── templates/              classic / novel 模板
+├── mathjax-tex-svg.js      离线 MathJax
+├── _conf_schema.json       AstrBot WebUI 配置定义
+├── metadata.yaml           插件市场元数据
+└── tests/                  文本、模板与元数据回归测试
 ```
 
-### 手动验证 Playwright 浏览器路径
+## 开发验证
 
-在 AstrBot 实例的 venv 中执行：
+在插件目录运行：
 
 ```bash
-python -c "import os; print(os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '未设置（使用默认路径）'))"
+python -m pytest -q
+python -m ruff check .
+python -m ruff format --check .
 ```
 
-正常应输出类似 `...\core\data\plugin_data\astrbot_plugin_latex_render\playwright_browsers` 的路径。
+完整渲染还需要在 AstrBot 中重载插件，并至少执行一次 `/测试`。纯单元测试不会替你下载 Chromium，也不会假装一张图已经真的发出去了。
+
+## 致谢与许可
+
+项目灵感来自 [lumingya/astrbot_plugin_html_render](https://github.com/lumingya/astrbot_plugin_html_render)，并沿用其 MIT 许可允许的设计思路。
+
+[AstrBot](https://github.com/AstrBotDevs/AstrBot) · [更新记录](CHANGELOG.md) · [MIT License](LICENSE)
