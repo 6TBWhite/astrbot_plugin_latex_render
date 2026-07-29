@@ -2,7 +2,7 @@
   <img src="logo.png" width="88" alt="LaTeX Render Logo" />
   <h1>LaTeX Render</h1>
   <p><strong>让 LLM 把公式、表格与长讲解直接排成一张好读的图。</strong></p>
-  <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，用户也可以通过命令切换和预览模板。</p>
+  <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，用户也可以通过命令查看模板列表并切换默认模板。</p>
   <p>
     <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
     <a href="https://github.com/6TBWhite/astrbot_plugin_latex_render/releases"><img src="https://img.shields.io/badge/release-v1.0.3-7357D9?style=flat-square" alt="Release v1.0.3" /></a>
@@ -29,15 +29,14 @@
 
 ## 核心能力
 
-| 能力 | 带来的体验 | 默认边界 |
+| 功能 | 实现 | 边界 |
 | --- | --- | --- |
-| LLM 主动出图 | Agent 可调用 `render_to_image`，把整段回复一次排成图片 | 不拦截普通消息，不强制所有回答转图 |
-| Markdown 排版 | 支持标题、列表、引用、代码块、删除线和表格 | Markdown 可在 WebUI 中关闭 |
-| LaTeX 公式 | 支持 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和常见环境 | MathJax 使用随插件提供的本地副本 |
-| 双内置模板 | `classic` 适合讲题与知识整理，`novel` 适合叙事和对白 | 模板必须位于 `templates/`，且至少保留一个 |
-| 用户模板偏好 | 用户可切换自己的默认模板，也可临时预览其他模板 | 偏好保存在当前插件进程内，重载后恢复全局默认 |
-| 本地渲染 | 内容由 Playwright / Chromium 在 AstrBot 主机上生成 | 首次使用需要浏览器二进制和 Linux 系统库 |
-| 临时原文上下文 | 可选地让 LLM 在后续轮次核对已经发成图片的原文 | 实验性、默认关闭，按完整会话隔离 |
+| LLM 工具调用 | Agent 可调用 `render_to_image`，将完整内容渲染并发送为图片 | 不拦截普通消息，不自动把所有回复转为图片 |
+| Markdown 排版 | 通过 Mistune 处理标题、列表、引用、代码块、删除线和表格 | 可在 WebUI 中关闭 |
+| LaTeX 公式 | 识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和 `\begin{...}` / `\end{...}` 块 | 具体语法支持范围由插件附带的 MathJax 决定 |
+| 内置模板 | 仓库提供 `classic` 和 `novel` 两个 HTML 模板 | `templates/` 中至少需要一个可用模板 |
+| 模板选择 | `/切换` 设置当前用户的默认模板；LLM 工具可为单次渲染指定模板 | 用户默认模板仅保存在当前插件进程中，重载后失效 |
+| 本地渲染 | Playwright / Chromium 在 AstrBot 主机上排版并截图 | 首次启动会下载 Chromium；Linux 环境可能还需安装系统库 |
 
 ## 渲染流程
 
@@ -202,8 +201,10 @@ render_to_image(
 | `/测试 [文本]` | `/test` | 渲染输入文本；不填时使用内置测试内容 |
 | `/切换 <名称或 ID>` | `/switch` | 切换当前用户的默认模板 |
 | `/查看` | `/templates` | 查看模板列表与当前模板 |
-| `/预览模板 <名称或 ID> [文本]` | `/previewtpl`、`/tplpreview` | 临时预览，不修改默认模板 |
+| `/预览模板 <名称或 ID> [文本]` | `/previewtpl`、`/tplpreview` | 使用指定模板渲染测试内容，不修改默认模板 |
 | `/探针gif` | `/probegif` | 输出三帧诊断截图；仅用于排障，不提供 GIF 动画渲染功能 |
+
+`/测试` 和 `/预览模板` 都会输出一张实际渲染的图片。前者使用当前默认模板，后者允许为本次测试指定模板；这里的“预览”不是模板缩略图或样式画廊。
 
 ### `classic`
 
