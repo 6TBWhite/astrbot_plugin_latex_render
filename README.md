@@ -1,7 +1,7 @@
 <div align="center">
   <img src="logo.png" width="88" alt="LaTeX Render Logo" />
   <h1>LaTeX Render</h1>
-  <p><strong> Markdown / LaTeX 本地图片渲染，支持自动分页与 A4 版式。</strong></p>
+  <p><strong>Markdown / LaTeX 本地图片渲染，支持自动分页与 A4 版式</strong></p>
   <p>面向 AstrBot 的本地 Markdown / LaTeX 图片渲染插件。内容在本机 Chromium 中完成排版，LLM 可以主动调用工具出图，管理员也可以在渲染工作台中实时预览、调参和管理自定义模板。</p>
   <p>
     <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-Plugin-5B67F1?style=flat-square" alt="AstrBot Plugin" /></a>
