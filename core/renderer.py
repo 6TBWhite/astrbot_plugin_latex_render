@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import os
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 from astrbot.api import logger
@@ -423,29 +424,6 @@ def _add_continuation_marker(
         logger.warning(f"[HTML渲染] 添加续页标记失败: {exc}")
 
 
-def _append_bottom_buffer(path: str, padding_css: int, scale: int) -> None:
-    """Extend a paginated image with a clean edge-matched bottom buffer."""
-
-    if not GIF_AVAILABLE or padding_css <= 0:
-        return
-    padding_pixels = max(1, int(padding_css * scale))
-    try:
-        with PILImage.open(path) as source:
-            image = source.convert("RGB")
-        sample_height = min(8, image.height)
-        edge = image.crop((0, image.height - sample_height, image.width, image.height))
-        edge = edge.resize((image.width, 1), PILImage.Resampling.BOX)
-        edge = edge.resize((image.width, padding_pixels), PILImage.Resampling.NEAREST)
-        canvas = PILImage.new(
-            "RGB", (image.width, image.height + padding_pixels), "white"
-        )
-        canvas.paste(image, (0, 0))
-        canvas.paste(edge, (0, image.height))
-        canvas.save(path, "JPEG", quality=92, optimize=True)
-    except Exception as exc:
-        logger.warning(f"[HTML渲染] 添加分页底部缓冲失败: {exc}")
-
-
 def _pad_fixed_canvas(
     path: str,
     page_width: int,
@@ -697,27 +675,47 @@ async def _get_animation_duration(page) -> float:
 # ==================== 主渲染函数 ====================
 
 
-async def html_to_image_playwright(
-    html_content: str,
-    output_image_path: str,
-    scale: int = 2,
-    width: int = 600,
-    is_gif: bool = False,
-    duration: float = 3.0,
-    fps: int = 15,
-    layout: str = "auto",
-    max_page_height: int = 3200,
-    max_pages: int = 8,
-    max_output_bytes: int = 6 * 1024 * 1024,
-    show_page_numbers: bool = True,
-    allow_remote_assets: bool = False,
-    fixed_page_size: dict | None = None,
-) -> BrowserRenderResult:
+@dataclass
+class RenderOptions:
+    """浏览器渲染参数集合。"""
+
+    html_content: str
+    output_image_path: str
+    scale: int = 2
+    width: int = 600
+    is_gif: bool = False
+    duration: float = 3.0
+    fps: int = 15
+    layout: str = "auto"
+    max_page_height: int = 3200
+    max_pages: int = 8
+    max_output_bytes: int = 6 * 1024 * 1024
+    show_page_numbers: bool = True
+    allow_remote_assets: bool = False
+    fixed_page_size: dict | None = None
+
+
+async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResult:
     """
     使用 Playwright 将 HTML 内容渲染成图片。
     复用浏览器实例，每次只创建新页面。
     GIF 模式使用时间轴跳帧：暂停动画 → seek到每帧时间点 → 截图，零等待。
     """
+    html_content = options.html_content
+    output_image_path = options.output_image_path
+    scale = options.scale
+    width = options.width
+    is_gif = options.is_gif
+    duration = options.duration
+    fps = options.fps
+    layout = options.layout
+    max_page_height = options.max_page_height
+    max_pages = options.max_pages
+    max_output_bytes = options.max_output_bytes
+    show_page_numbers = options.show_page_numbers
+    allow_remote_assets = options.allow_remote_assets
+    fixed_page_size = options.fixed_page_size
+
     import time as _time
 
     global _last_browser_error, _last_render_seconds
@@ -864,9 +862,6 @@ async def html_to_image_playwright(
                             int(fixed_page_size.get("top_margin", 76)),
                             scale,
                         )
-                elif len(output_paths) > 1:
-                    for path in output_paths:
-                        _append_bottom_buffer(path, bottom_buffer, scale)
 
                 for index, path in enumerate(output_paths, start=1):
                     _add_continuation_marker(

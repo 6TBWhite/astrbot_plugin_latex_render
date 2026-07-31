@@ -39,6 +39,7 @@ from . import __version__
 from .core import text_processing as _text_processing
 from .core.models import BrowserRenderResult, RenderFailure, RenderResult
 from .core.renderer import (
+    RenderOptions,
     close_browser,
     get_renderer_status,
     html_to_image_playwright,
@@ -1918,13 +1919,13 @@ body > * {{
             fixed_page_size=fixed_page_size,
         )
 
-        browser_result = await html_to_image_playwright(**render_kwargs)
+        browser_result = await html_to_image_playwright(RenderOptions(**render_kwargs))
         normalized = self._normalize_browser_result(browser_result, output_path)
         if not normalized:
             # 浏览器断开后底层会清空实例；只重试一次。
             if normalized.error_code == "browser_error":
                 logger.warning("[HTML渲染] 浏览器渲染失败，重建后重试一次")
-                browser_result = await html_to_image_playwright(**render_kwargs)
+                browser_result = await html_to_image_playwright(RenderOptions(**render_kwargs))
                 normalized = self._normalize_browser_result(browser_result, output_path)
 
         if not normalized:

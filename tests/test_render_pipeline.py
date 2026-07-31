@@ -8,9 +8,9 @@ def test_render_pipeline_applies_markdown_mathjax_and_template(
 ) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_renderer(**kwargs):
-        captured.update(kwargs)
-        Path(kwargs["output_image_path"]).write_bytes(b"image-placeholder")
+    async def fake_renderer(options):
+        captured.update(options.__dict__)
+        Path(options.output_image_path).write_bytes(b"image-placeholder")
         return True
 
     monkeypatch.setattr(
@@ -44,9 +44,9 @@ def test_regular_template_keeps_configured_render_width(
     captured = {}
     plugin.config["render_width"] = 720
 
-    async def fake_renderer(**kwargs):
-        captured.update(kwargs)
-        Path(kwargs["output_image_path"]).write_bytes(b"image-placeholder")
+    async def fake_renderer(options):
+        captured.update(options.__dict__)
+        Path(options.output_image_path).write_bytes(b"image-placeholder")
         return True
 
     monkeypatch.setattr(
@@ -64,9 +64,9 @@ def test_regular_template_forwards_configured_auto_page_height(
     captured = {}
     plugin.config["max_page_height"] = 3600
 
-    async def fake_renderer(**kwargs):
-        captured.update(kwargs)
-        Path(kwargs["output_image_path"]).write_bytes(b"image-placeholder")
+    async def fake_renderer(options):
+        captured.update(options.__dict__)
+        Path(options.output_image_path).write_bytes(b"image-placeholder")
         return True
 
     monkeypatch.setattr(

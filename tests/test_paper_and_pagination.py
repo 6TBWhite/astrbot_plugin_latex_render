@@ -73,29 +73,12 @@ def test_semantic_pagination_keeps_short_lead_in_with_formula(plugin_main):
     assert hard_breaks == set()
 
 
-def test_paginated_image_bottom_buffer_matches_edge(plugin_main, tmp_path) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
-    path = tmp_path / "page.jpg"
-    image = PILImage.new("RGB", (120, 200), (31, 72, 52))
-    image.paste((245, 241, 230), (12, 0, 108, 200))
-    image.save(path, "JPEG", quality=95)
-
-    renderer._append_bottom_buffer(str(path), padding_css=40, scale=2)
-
-    with PILImage.open(path) as buffered:
-        assert buffered.size == (120, 280)
-        left = buffered.getpixel((4, 260))
-        center = buffered.getpixel((60, 260))
-        assert left[1] > left[0]
-        assert min(center) > 220
-
-
 def test_paper_template_requests_fixed_a4_canvas(plugin, plugin_main, monkeypatch):
     captured = {}
 
-    async def fake_renderer(**kwargs):
-        captured.update(kwargs)
-        Path(kwargs["output_image_path"]).write_bytes(b"paper-image")
+    async def fake_renderer(options):
+        captured.update(options.__dict__)
+        Path(options.output_image_path).write_bytes(b"paper-image")
         return True
 
     monkeypatch.setattr(
