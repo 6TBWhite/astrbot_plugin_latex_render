@@ -168,9 +168,9 @@ $$
         {
             "name": "classic",
             "display_name": "Classic 知识卡",
-            "description": "适合讲题、公式、代码与结构化知识。",
+            "description": "手机阅读的讲题卡：长文按页分屏，公式、代码与表格一页一屏。",
             "scene": "knowledge",
-            "tags": ["步骤推导", "代码示例", "表格对比"],
+            "tags": ["手机阅读", "讲题讲解", "公式推导", "代码示例"],
             "source": "builtin",
             "editable": False,
             "base_template": "classic",

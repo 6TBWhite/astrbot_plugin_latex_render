@@ -21,7 +21,7 @@
         body {
             font-family: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
             background: #2d5a3d;
-            padding: var(--classic-body-padding, 18px);
+            padding: 0;
         }
 
         .page {
@@ -30,22 +30,24 @@
                 radial-gradient(circle at 20% 80%, rgba(45, 90, 61, 0.03) 0%, transparent 50%),
                 radial-gradient(circle at 80% 20%, rgba(201, 184, 150, 0.06) 0%, transparent 50%);
             width: 100%;
-            padding: var(--classic-page-padding-y, 32px) var(--classic-page-padding-x, 28px);
+            border: 18px solid #2d5a3d;
             border-radius: 8px;
-            box-shadow:
-                0 2px 8px rgba(0,0,0,0.15),
-                0 8px 32px rgba(0,0,0,0.35);
+            padding: var(--classic-page-padding-y, 32px) var(--classic-page-padding-x, 28px);
             position: relative;
             min-width: 320px;
+            overflow: hidden;
+        }
+
+        .page + .page {
+            margin-top: 0;
         }
 
         .page::before {
             content: "";
             position: absolute;
-            top: 0; left: 0; right: 0;
+            top: 18px; left: 18px; right: 18px;
             height: 4px;
             background: linear-gradient(to right, #2d5a3d, #4a8b6a, #2d5a3d);
-            border-radius: 8px 8px 0 0;
         }
 
         .content {

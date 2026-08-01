@@ -77,7 +77,6 @@ _playwright_instance = None
 _browser_instance = None
 _browser_lock = asyncio.Lock()
 _CAPTURE_BOTTOM_PADDING = 24
-_PAGINATION_BOTTOM_BUFFER = 40
 _last_browser_error = ""
 _last_render_seconds = 0.0
 
@@ -281,30 +280,17 @@ def _group_pagination_blocks(blocks: list[dict]) -> list[dict]:
                 "top": int(first["top"]),
                 "bottom": int(last["bottom"]),
                 "breakable": str(last.get("tag", "")).lower() not in _HEADING_TAGS,
+                "block_indexes": list(range(index, last_index + 1)),
             }
         )
         index = last_index + 1
     return groups
 
 
-async def _calculate_page_slices(
-    page,
-    full_height: int,
-    max_page_height: int,
-    max_pages: int,
-) -> tuple[list[tuple[int, int]], set[int]]:
-    """Find page breaks near semantic block boundaries."""
+async def _collect_pagination_blocks(page) -> list[dict]:
+    """Measure the geometry of direct children of the content container."""
 
-    if full_height <= max_page_height:
-        return [(0, full_height)], set()
-
-    if full_height > max_page_height * max_pages:
-        raise ValueError(
-            f"页面高度 {full_height}px 超过分页上限 "
-            f"{max_page_height * max_pages}px（最多 {max_pages} 页）"
-        )
-
-    blocks = await page.evaluate(
+    return await page.evaluate(
         """() => {
             const root = document.querySelector('.content') || document.body;
             if (!root) return [];
@@ -328,6 +314,121 @@ async def _calculate_page_slices(
             }).filter(item => item.bottom > item.top);
         }"""
     )
+
+
+def _pack_into_pages(
+    groups: list[dict], page_height: int, max_pages: int
+) -> tuple[list[list[int]], set[int]]:
+    """Pack atomic groups into fixed-height pages; return per-page block indexes."""
+
+    pages: list[list[int]] = []
+    hard_pages: set[int] = set()
+    page_top: int | None = None
+    current: list[int] | None = None
+    for group in groups:
+        top = int(group["top"])
+        bottom = int(group["bottom"])
+        if current is None:
+            page_top = top
+            current = []
+        if bottom - page_top <= page_height:
+            current.extend(group["block_indexes"])
+        else:
+            pages.append(current)
+            page_top = top
+            current = list(group["block_indexes"])
+            if bottom - top > page_height:
+                hard_pages.add(len(pages))
+    if current is not None:
+        pages.append(current)
+    if len(pages) > max_pages:
+        raise ValueError(f"分页结果为 {len(pages)} 页，超过最多 {max_pages} 页")
+    return pages, hard_pages
+
+
+async def _measure_page_content_height(page, page_height: int) -> int:
+    """Return the usable content height of a fixed-height page container."""
+
+    chrome = await page.evaluate(
+        """() => {
+            const root = document.querySelector('.content');
+            if (!root) return 0;
+            const cs = getComputedStyle(root.parentElement);
+            return (
+                parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) +
+                parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
+            );
+        }"""
+    )
+    return max(400, int(page_height) - int(chrome or 0))
+
+
+async def _inject_page_containers(
+    page,
+    page_block_indexes: list[list[int]],
+    page_height: int,
+) -> list[tuple[int, int]]:
+    """Move blocks into cloned fixed-height page containers; return page geometry."""
+
+    result = await page.evaluate(
+        """([assignments, pageHeight]) => {
+            const root = document.querySelector('.content');
+            if (!root || root.dataset.paginationDone) return null;
+            root.dataset.paginationDone = '1';
+            const children = Array.from(root.children);
+            const pageTpl = root.parentElement;
+            const container = pageTpl.parentElement;
+            assignments.forEach((blockIndexes, pi) => {
+                let pageEl = pageTpl;
+                if (pi > 0) {
+                    pageEl = pageTpl.cloneNode(true);
+                    const contentEl = pageEl.querySelector('.content');
+                    while (contentEl.firstChild) {
+                        contentEl.removeChild(contentEl.firstChild);
+                    }
+                    container.appendChild(pageEl);
+                }
+                const contentEl = pageEl.querySelector('.content');
+                for (const bi of blockIndexes) {
+                    contentEl.appendChild(children[bi]);
+                }
+                pageEl.style.height = pageHeight + 'px';
+                pageEl.style.overflow = 'hidden';
+                pageEl.style.boxShadow = 'none';
+            });
+            const pages = Array.from(container.children).filter(
+                (el) => el.classList.contains('page') || el.classList.contains('aurora-card')
+            );
+            return pages.map((el) => {
+                const r = el.getBoundingClientRect();
+                return [Math.round(r.top + window.scrollY), Math.round(r.bottom + window.scrollY)];
+            });
+        }""",
+        [page_block_indexes, page_height],
+    )
+    if result is None:
+        raise RuntimeError("分页容器注入失败")
+    return [(int(top), int(bottom)) for top, bottom in result]
+
+
+async def _calculate_page_slices(
+    page,
+    full_height: int,
+    max_page_height: int,
+    max_pages: int,
+) -> tuple[list[tuple[int, int]], set[int]]:
+    """Find page breaks near semantic block boundaries."""
+
+    if full_height <= max_page_height:
+        return [(0, full_height)], set()
+
+    if full_height > max_page_height * max_pages:
+        raise ValueError(
+            f"页面高度 {full_height}px 超过分页上限 "
+            f"{max_page_height * max_pages}px（最多 {max_pages} 页）"
+        )
+
+    blocks = await _collect_pagination_blocks(page)
     groups = _group_pagination_blocks(blocks)
 
     slices: list[tuple[int, int]] = []
@@ -817,40 +918,67 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
                 normalized_layout == "auto" and full_height > max_page_height
             )
             if should_paginate:
-                bottom_buffer = (
-                    0
-                    if fixed_page_size
-                    else min(
-                        _PAGINATION_BOTTOM_BUFFER,
-                        max(0, int(max_page_height) - 400),
+                hard_breaks: set[int] = set()
+                page_windows: list[tuple[int, int]] | None = None
+                if fixed_page_size:
+                    slice_height_budget = max(400, int(max_page_height))
+                    slices, hard_breaks = await _calculate_page_slices(
+                        page,
+                        full_height,
+                        slice_height_budget,
+                        max(1, int(max_pages)),
                     )
-                )
-                slice_height_budget = max(400, int(max_page_height) - bottom_buffer)
-                slices, hard_breaks = await _calculate_page_slices(
-                    page,
-                    full_height,
-                    slice_height_budget,
-                    max(1, int(max_pages)),
-                )
+                    page_windows = slices
+                else:
+                    blocks = await _collect_pagination_blocks(page)
+                    groups = _group_pagination_blocks(blocks)
+                    usable_height = await _measure_page_content_height(
+                        page, int(max_page_height)
+                    )
+                    usable_height = max(400, usable_height - _CAPTURE_BOTTOM_PADDING)
+                    page_block_indexes, hard_pages = _pack_into_pages(
+                        groups, usable_height, max(1, int(max_pages))
+                    )
+                    hard_breaks = {page_index + 1 for page_index in hard_pages}
+                    if len(page_block_indexes) > 1:
+                        await _inject_page_containers(
+                            page, page_block_indexes, int(max_page_height)
+                        )
+                    else:
+                        page_windows = [(0, full_height)]
+
                 base, extension = os.path.splitext(output_image_path)
                 extension = extension or ".jpg"
-                for index, (start, end) in enumerate(slices, start=1):
+                page_count = (
+                    len(page_windows)
+                    if page_windows is not None
+                    else await page.locator(".page, .aurora-card").count()
+                )
+                for index in range(page_count):
                     path = (
                         output_image_path
                         if index == 1
                         else f"{base}_p{index}{extension}"
                     )
-                    await page.screenshot(
-                        path=path,
-                        clip={
-                            "x": 0,
-                            "y": start,
-                            "width": width,
-                            "height": end - start,
-                        },
-                        type="jpeg",
-                        quality=92,
-                    )
+                    if page_windows is not None:
+                        start, end = page_windows[index]
+                        await page.screenshot(
+                            path=path,
+                            clip={
+                                "x": 0,
+                                "y": start,
+                                "width": width,
+                                "height": end - start,
+                            },
+                            type="jpeg",
+                            quality=92,
+                        )
+                    else:
+                        await (
+                            page.locator(".page, .aurora-card")
+                            .nth(index)
+                            .screenshot(path=path, type="jpeg", quality=92)
+                        )
                     output_paths.append(path)
 
                 if fixed_page_size:

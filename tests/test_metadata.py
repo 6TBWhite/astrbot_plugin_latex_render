@@ -16,7 +16,7 @@ def test_market_metadata_is_complete_and_consistent() -> None:
 
     assert version_match is not None
     assert metadata["id"] == metadata["name"] == "astrbot_plugin_latex_render"
-    assert metadata["version"] == version_match.group(1) == "1.1.0"
+    assert metadata["version"] == version_match.group(1) == "1.2.0"
     assert metadata["type"] == "star"
     assert metadata["category"] == "工具"
     assert metadata["branch"] == "master"
@@ -31,10 +31,13 @@ def test_v109_is_documented_as_release() -> None:
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
     changelog = (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert "img.shields.io/github/v/release/6TBWhite/astrbot_plugin_latex_render" in readme
-    assert "当前发布版本为 `1.1.0`" in readme
-    assert "development-v1.1.0" not in readme
+    assert (
+        "img.shields.io/github/v/release/6TBWhite/astrbot_plugin_latex_render" in readme
+    )
+    assert "当前发布版本为 `1.2.0`" in readme
+    assert "development-v1.2.0" not in readme
     assert "支持自动分页与 A4 版式" in readme
+    assert "v1.2.0 固定页高装箱分页" in changelog
     assert "v1.1.0 渲染参数收敛与分页缓冲移除" in changelog
     assert "v1.0.8 安全分页与可视化渲染工作台" in changelog
     for marker in ("未发布", "尚未发布", "开发中"):

@@ -116,7 +116,7 @@ def test_basic_settings_use_layered_cards_and_explanatory_tooltips(
         "step": 100,
         "unit": "CSS px",
         "hint": (
-            "auto 超过该高度后在语义块边界分页；"
+            "auto 超过该高度后按顶层语义块装箱到固定高度页面；"
             "普通聊天建议 2400–4000，默认 3200。固定 A4 模板不受影响。"
         ),
         "value": 3200,
@@ -304,7 +304,7 @@ def test_gallery_uses_scene_and_trait_tags_instead_of_generic_capabilities() -> 
     assert 'paper: "论文排版"' in text
     assert 'custom: "自由编辑"' in text
     assert 'class="pill pill-scene"' in text
-    assert '"步骤推导"' in manifest
+    assert '"手机阅读"' in manifest
     assert '"对白分色"' in manifest
     assert '"固定 A4"' in manifest
     assert '"Markdown"' not in manifest

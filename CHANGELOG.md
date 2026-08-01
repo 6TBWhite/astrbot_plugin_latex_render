@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-08-01：v1.2.0 固定页高装箱分页
+
+### 摘要
+
+本版本将普通模板（`classic` / `novel` / `custom`）的分页改为固定页高容器加块装箱：内容按顶层语义块收集后按页高预算装箱，注入等高页面容器后逐页截图。每张图片尺寸一致、上下边框完整，不再出现公式贴底、边框被截断的问题。`paper` 模板继续按固定 A4 语义切片分页，不受影响。
+
+### 改动
+
+- 新增块收集与装箱：`_collect_pagination_blocks` 收集顶层语义块并记录高度，`_pack_into_pages` 按页高预算装箱（预算计入卡片 padding 与边框，并预留 24px MathJax 字体加载余量）
+- 新增页面容器注入：`_inject_page_containers` 克隆页容器、搬移内容块并清除 box-shadow，避免投影在 `overflow: hidden` 下被裁进盒内产生底部渐变
+- 分页截图改为元素级 `element.screenshot`：`page.screenshot(clip=)` 存在 4px 偏移和邻近内容污染问题
+- 模板边框方案：`classic` / `novel` / `custom` 改为卡片自带实色边框（绿 18px / 灰 40px / 深色 24px），`overflow: hidden` 下不再裁掉边框，body padding 归零
+- 超高单块保留硬切加续页标记兜底；配置与 WebUI 文案同步更新
+- 模板定位文案：`classic` 描述与标签改为突出"手机阅读讲题"场景（长文按页分屏、一页一屏），同步 README 与 WebUI 模板画廊
+
+---
+
 ## 2026-08-01：v1.1.0 渲染参数收敛与分页缓冲移除
 
 ### 摘要

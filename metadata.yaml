@@ -1,7 +1,7 @@
 id: astrbot_plugin_latex_render
 name: astrbot_plugin_latex_render
 display_name: LaTeX / Markdown 图片渲染
-version: 1.1.0
+version: 1.2.0
 short_desc: 把 Markdown、LaTeX 公式与长文本排成适合聊天窗口阅读的图片
 desc: 面向 AstrBot 的安全本地图片渲染插件。它提供可由 LLM 主动调用的 render_to_image 工具，将 Markdown、LaTeX 公式、表格与长文本分页渲染为图片；内置可视化渲染工作台、自定义模板、离线 MathJax、持久化偏好、资源限制与固定 A4 paper 模板。
 author: 6TBWhite

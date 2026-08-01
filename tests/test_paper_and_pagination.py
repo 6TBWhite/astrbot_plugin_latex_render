@@ -53,7 +53,12 @@ def test_semantic_pagination_keeps_short_lead_in_with_formula(plugin_main):
 
     groups = renderer._group_pagination_blocks(blocks)
 
-    assert groups[1] == {"top": 380, "bottom": 620, "breakable": True}
+    assert groups[1] == {
+        "top": 380,
+        "bottom": 620,
+        "breakable": True,
+        "block_indexes": [1, 2],
+    }
 
     class FakePage:
         async def evaluate(self, _script):
@@ -71,6 +76,51 @@ def test_semantic_pagination_keeps_short_lead_in_with_formula(plugin_main):
     assert slices == [(0, 360), (360, 780), (780, 980)]
     assert 430 not in {end for _, end in slices}
     assert hard_breaks == set()
+
+
+def test_pack_into_pages_fills_fixed_height_pages(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    groups = [
+        {"top": 0, "bottom": 1000, "breakable": True, "block_indexes": [0]},
+        {"top": 1040, "bottom": 2100, "breakable": True, "block_indexes": [1]},
+        {"top": 2140, "bottom": 3000, "breakable": True, "block_indexes": [2]},
+        {"top": 3040, "bottom": 4500, "breakable": True, "block_indexes": [3]},
+        {"top": 4540, "bottom": 5000, "breakable": True, "block_indexes": [4]},
+    ]
+    pages, hard = renderer._pack_into_pages(groups, page_height=3200, max_pages=4)
+    assert pages == [[0, 1, 2], [3, 4]]
+    assert hard == set()
+
+
+def test_pack_into_pages_marks_oversized_group_as_hard(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    groups = [
+        {"top": 0, "bottom": 3000, "breakable": True, "block_indexes": [0]},
+        {"top": 3040, "bottom": 7000, "breakable": True, "block_indexes": [1]},
+        {"top": 7040, "bottom": 8000, "breakable": True, "block_indexes": [2]},
+    ]
+    pages, hard = renderer._pack_into_pages(groups, page_height=3200, max_pages=5)
+    assert pages == [[0], [1], [2]]
+    assert hard == {1}
+
+
+def test_pack_into_pages_raises_when_exceeding_max_pages(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    groups = [
+        {
+            "top": i * 4000,
+            "bottom": i * 4000 + 1000,
+            "breakable": True,
+            "block_indexes": [i],
+        }
+        for i in range(4)
+    ]
+    try:
+        renderer._pack_into_pages(groups, page_height=3200, max_pages=2)
+    except ValueError as exc:
+        assert "分页结果" in str(exc)
+    else:
+        raise AssertionError("应抛出页数超限异常")
 
 
 def test_paper_template_requests_fixed_a4_canvas(plugin, plugin_main, monkeypatch):

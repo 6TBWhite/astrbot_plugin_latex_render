@@ -284,7 +284,7 @@ class LatexRenderPlugin(Star):
             "step": 100,
             "unit": "CSS px",
             "hint": (
-                "auto 超过该高度后在语义块边界分页；"
+                "auto 超过该高度后按顶层语义块装箱到固定高度页面；"
                 "普通聊天建议 2400–4000，默认 3200。固定 A4 模板不受影响。"
             ),
         },
@@ -1925,7 +1925,9 @@ body > * {{
             # 浏览器断开后底层会清空实例；只重试一次。
             if normalized.error_code == "browser_error":
                 logger.warning("[HTML渲染] 浏览器渲染失败，重建后重试一次")
-                browser_result = await html_to_image_playwright(RenderOptions(**render_kwargs))
+                browser_result = await html_to_image_playwright(
+                    RenderOptions(**render_kwargs)
+                )
                 normalized = self._normalize_browser_result(browser_result, output_path)
 
         if not normalized:
