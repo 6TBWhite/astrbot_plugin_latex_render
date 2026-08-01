@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
@@ -60,6 +61,7 @@ DROP_CONTENT_TAGS = {
 GLOBAL_ATTRIBUTES = {"title"}
 TAG_ATTRIBUTES = {
     "a": {"href"},
+    "code": {"class"},
     "th": {"align", "colspan", "rowspan"},
     "td": {"align", "colspan", "rowspan"},
     "ol": {"start"},
@@ -67,6 +69,9 @@ TAG_ATTRIBUTES = {
     "span": {"class"},
 }
 SAFE_CLASSES = {"astr-math-inline", "astr-math-block"}
+CODE_LANGUAGE_CLASS_PATTERN = re.compile(
+    r"^language-[a-z0-9][a-z0-9_+#-]{0,31}$", re.IGNORECASE
+)
 SAFE_LINK_SCHEMES = {"", "http", "https", "mailto"}
 
 
@@ -93,7 +98,14 @@ class _SafeHTMLParser(HTMLParser):
             if name.startswith("on") or name not in permitted:
                 continue
             if name == "class":
-                classes = [item for item in value.split() if item in SAFE_CLASSES]
+                if tag == "code":
+                    classes = [
+                        item.lower()
+                        for item in value.split()
+                        if CODE_LANGUAGE_CLASS_PATTERN.fullmatch(item)
+                    ][:1]
+                else:
+                    classes = [item for item in value.split() if item in SAFE_CLASSES]
                 if not classes:
                     continue
                 value = " ".join(classes)

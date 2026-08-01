@@ -28,7 +28,7 @@ LaTeX Render 给 AstrBot 增加一个 `render_to_image` 工具：LLM 先写完�
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前发布版本为 `1.2.0`，要求 AstrBot `>=4.26.3`。
+当前发布版本为 `1.2.1`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
@@ -36,6 +36,7 @@ LaTeX Render 给 AstrBot 增加一个 `render_to_image` 工具：LLM 先写完�
 | ----------- | ------------------------------------------------------------------------ | ---------------------------------- |
 | LLM 工具调用    | Agent 可调用 `render_to_image`，将完整内容渲染并发送为图片                                | 不拦截普通消息，不自动把所有回复转为图片               |
 | Markdown 排版 | 通过 Mistune 处理标题、列表、引用、代码块、删除线和表格                                         | 可在 WebUI 中关闭                       |
+| 代码语法高亮      | 显式标注语言的围栏代码块使用本地 Highlight.js 高亮，并按模板匹配主题                              | 不猜测未标注语言，不为行内代码或可信原始 HTML 注入高亮       |
 | LaTeX 公式    | 识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和 `\begin{...}` / `\end{...}` 块 | 具体语法支持范围由插件附带的 MathJax 决定          |
 | 智能分页        | 超过页高预算后按顶层语义块装箱到固定高度页面，每张图片尺寸一致                                  | 公式、表格和代码块优先整体换页；极端超高单块会带续页标记       |
 | 内置模板        | 仓库提供 `classic`、`novel` 和固定 A4 `paper`                                    | `templates/` 中至少需要一个可用模板           |
@@ -206,7 +207,7 @@ python -m pip install -r requirements.txt
 | `max_output_bytes`                  | `6 MiB`   | 单图默认最多 6 MiB，超出后自动压缩                                    |
 | `max_concurrent_renders`            | `2`       | 最大并发 Chromium 渲染数                                       |
 | `max_queue_size`                    | `8`       | 最大等待任务数                                                 |
-| `show_page_numbers`                 | `true`    | 多页结果显示页码                                                |
+| `show_page_numbers`                 | `true`    | 多页结果底部居中显示自适应明暗页码                                      |
 | `classic_body_padding`              | `18`      | `classic` 外圈边距                                          |
 | `classic_page_padding_y`            | `32`      | `classic` 画布上下内边距                                       |
 | `classic_page_padding_x`            | `28`      | `classic` 画布左右内边距                                       |

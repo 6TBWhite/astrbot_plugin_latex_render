@@ -3,7 +3,8 @@ import importlib
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from PIL import Image as PILImage
+import pytest
+from PIL import Image as PILImage, ImageChops, ImageStat
 
 
 def test_semantic_pagination_keeps_short_lead_in_with_formula(plugin_main):
@@ -123,6 +124,180 @@ def test_pack_into_pages_raises_when_exceeding_max_pages(plugin_main) -> None:
         raise AssertionError("应抛出页数超限异常")
 
 
+def test_static_layout_uses_fixed_page_content_height(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    options = renderer.RenderOptions(
+        html_content="<p>content</p>",
+        output_image_path="render.jpg",
+        layout="single",
+        max_page_height=3200,
+        fixed_page_size={"content_height": 971},
+    )
+
+    layout, page_height, should_paginate = renderer._resolve_static_layout(
+        options, full_height=800
+    )
+
+    assert layout == "paged"
+    assert page_height == 971
+    assert should_paginate is True
+
+
+def test_static_single_layout_rejects_absolute_height_overflow(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    options = renderer.RenderOptions(
+        html_content="<p>content</p>",
+        output_image_path="render.jpg",
+        layout="single",
+        max_page_height=1000,
+        max_pages=2,
+    )
+
+    with pytest.raises(ValueError, match="单页高度"):
+        renderer._resolve_static_layout(options, full_height=2001)
+
+
+def test_page_output_path_preserves_legacy_second_page_name(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+
+    assert renderer._page_output_path("render.jpg", 0) == "render_p0.jpg"
+    assert renderer._page_output_path("render.jpg", 1) == "render.jpg"
+    assert renderer._page_output_path("render.jpg", 2) == "render_p2.jpg"
+
+
+def test_page_number_font_size_tracks_render_scale(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+
+    assert renderer._page_number_font_size(0) == 14
+    assert renderer._page_number_font_size(1) == 14
+    assert renderer._page_number_font_size(2) == 28
+    assert renderer._page_number_font_size(3) == 42
+
+
+def test_page_number_position_is_centered_with_scaled_bottom_margin(
+    plugin_main,
+) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    text_bbox = (0, 4, 100, 24)
+
+    x, y = renderer._page_number_position(
+        (1200, 6400), text_bbox, scale=2, bottom_margin=24
+    )
+    actual_box = (
+        x + text_bbox[0],
+        y + text_bbox[1],
+        x + text_bbox[2],
+        y + text_bbox[3],
+    )
+
+    assert (actual_box[0] + actual_box[2]) // 2 == 600
+    assert 6400 - actual_box[3] == 48
+    _, default_y = renderer._page_number_position(
+        (1200, 6400), text_bbox, scale=2
+    )
+    assert 6400 - (default_y + text_bbox[3]) == 40
+
+
+def test_page_number_color_adapts_to_footer_luminance(plugin_main) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    text_box = (100, 80, 200, 110)
+    light_page = PILImage.new("RGB", (300, 140), (245, 245, 240))
+    dark_page = PILImage.new("RGB", (300, 140), (38, 48, 43))
+
+    assert renderer._page_number_color(light_page, text_box, 2) == (
+        42,
+        42,
+        42,
+        190,
+    )
+    assert renderer._page_number_color(dark_page, text_box, 2) == (
+        246,
+        242,
+        232,
+        220,
+    )
+
+
+def test_page_number_skips_single_page_without_touching_file(
+    plugin_main, tmp_path
+) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    path = tmp_path / "single.jpg"
+    PILImage.new("RGB", (600, 400), (240, 235, 224)).save(
+        path, "JPEG", quality=90, optimize=True
+    )
+    before = path.read_bytes()
+
+    renderer._add_page_number(str(path), 1, 1, scale=2)
+
+    assert path.read_bytes() == before
+
+
+def test_page_number_preserves_canvas_and_only_changes_footer(
+    plugin_main, tmp_path
+) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    path = tmp_path / "paged.jpg"
+    PILImage.new("RGB", (600, 400), (240, 235, 224)).save(
+        path, "JPEG", quality=90, optimize=True
+    )
+    with PILImage.open(path) as original_source:
+        original = original_source.convert("RGB")
+
+    renderer._add_page_number(str(path), 1, 5, scale=2)
+
+    with PILImage.open(path) as rendered_source:
+        rendered = rendered_source.convert("RGB")
+    assert rendered.size == original.size
+    content_diff = ImageChops.difference(
+        original.crop((0, 0, 600, 320)), rendered.crop((0, 0, 600, 320))
+    )
+    assert max(ImageStat.Stat(content_diff).rms) <= 1.0
+    footer_diff = ImageChops.difference(
+        original.crop((0, 320, 600, 400)), rendered.crop((0, 320, 600, 400))
+    )
+    assert footer_diff.getbbox() is not None
+
+
+def test_animation_detection_stops_after_css_strategy_decides(
+    plugin_main, monkeypatch
+) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    css_clip = {"x": 10, "y": 20, "width": 300, "height": 200}
+    css_detector = AsyncMock(return_value=(True, css_clip))
+    pixel_detector = AsyncMock()
+    monkeypatch.setattr(renderer, "_detect_css_animated_region", css_detector)
+    monkeypatch.setattr(renderer, "_detect_pixel_animated_region", pixel_detector)
+
+    result = asyncio.run(
+        renderer._detect_animated_region(object(), 2, 600, 800)
+    )
+
+    assert result == css_clip
+    pixel_detector.assert_not_awaited()
+
+
+def test_animation_detection_falls_back_to_pixel_strategy(
+    plugin_main, monkeypatch
+) -> None:
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    pixel_clip = {"x": 5, "y": 6, "width": 100, "height": 80}
+    monkeypatch.setattr(
+        renderer,
+        "_detect_css_animated_region",
+        AsyncMock(return_value=(False, None)),
+    )
+    pixel_detector = AsyncMock(return_value=pixel_clip)
+    monkeypatch.setattr(renderer, "_detect_pixel_animated_region", pixel_detector)
+
+    result = asyncio.run(
+        renderer._detect_animated_region(object(), 2, 600, 800)
+    )
+
+    assert result == pixel_clip
+    pixel_detector.assert_awaited_once()
+
+
 def test_paper_template_requests_fixed_a4_canvas(plugin, plugin_main, monkeypatch):
     captured = {}
 
@@ -148,6 +323,7 @@ def test_paper_template_requests_fixed_a4_canvas(plugin, plugin_main, monkeypatc
     assert len(result.images) == 1
     assert captured["width"] == 794
     assert captured["layout"] == "auto"
+    assert captured["page_number_bottom_margin"] == 20
     assert captured["fixed_page_size"] == {
         "width": 794,
         "height": 1123,

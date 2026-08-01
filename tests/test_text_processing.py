@@ -27,4 +27,14 @@ def test_advertised_markdown_constructs_are_rendered() -> None:
     assert "<li>列表项</li>" in rendered
     assert "<blockquote>" in rendered
     assert "<del>删除线</del>" in rendered
-    assert "<code" in rendered
+    assert '<code class="language-python">' in rendered
+
+
+def test_fenced_code_preserves_safe_language_and_escapes_html() -> None:
+    rendered = markdown_to_html(
+        "```c++\n<script>window.pwned = true</script>\n```"
+    )
+
+    assert '<code class="language-c++">' in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;window.pwned = true&lt;/script&gt;" in rendered

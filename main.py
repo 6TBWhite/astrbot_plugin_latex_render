@@ -50,6 +50,163 @@ from .core.text_processing import markdown_to_html, nl2br, preserve_newlines
 
 _PLUGIN_NAME = "astrbot_plugin_latex_render"
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+_CODE_THEME_BY_SCENE = {
+    "knowledge": "github-dark",
+    "story": "docco",
+    "paper": "github",
+    "custom": "night-owl",
+}
+_CODE_LANGUAGE_ALIASES = {
+    "c++": "cpp",
+    "c#": "csharp",
+    "cs": "csharp",
+    "html": "xml",
+    "htm": "xml",
+    "js": "javascript",
+    "md": "markdown",
+    "py": "python",
+    "sh": "bash",
+    "ts": "typescript",
+    "txt": "plaintext",
+    "text": "plaintext",
+    "yml": "yaml",
+    "zsh": "bash",
+}
+_CODE_LANGUAGE_LABELS = {
+    "bash": "Bash",
+    "c": "C",
+    "c++": "C++",
+    "cpp": "C++",
+    "c#": "C#",
+    "cs": "C#",
+    "csharp": "C#",
+    "html": "HTML",
+    "htm": "HTML",
+    "xml": "XML",
+    "js": "JavaScript",
+    "javascript": "JavaScript",
+    "json": "JSON",
+    "py": "Python",
+    "python": "Python",
+    "sh": "Bash",
+    "ts": "TypeScript",
+    "typescript": "TypeScript",
+    "txt": "Text",
+    "text": "Text",
+    "plaintext": "Text",
+    "yml": "YAML",
+    "yaml": "YAML",
+    "zsh": "Bash",
+}
+_CODE_HIGHLIGHT_LOADER_TEMPLATE = """
+<script data-astrbot-code-highlight-loader>
+window.__ASTR_CODE_HIGHLIGHT_READY__ = false;
+(function () {
+  const aliases = __ASTR_CODE_ALIASES__;
+  const labels = __ASTR_CODE_LABELS__;
+  const languageClass = /^language-([a-z0-9][a-z0-9_+#-]{0,31})$/i;
+
+  function finish() {
+    window.__ASTR_CODE_HIGHLIGHT_READY__ = true;
+  }
+
+  function highlightCode() {
+    try {
+      const script = document.createElement('script');
+      script.id = 'astrbot-highlight-script';
+      script.textContent = atob(__ASTR_HIGHLIGHT_SOURCE__);
+      document.head.appendChild(script);
+      if (!window.hljs || typeof window.hljs.highlightElement !== 'function') {
+        return;
+      }
+
+      document.querySelectorAll('pre > code').forEach(function (block) {
+        const sourceClass = Array.from(block.classList).find(function (name) {
+          return languageClass.test(name);
+        });
+        if (!sourceClass) {
+          return;
+        }
+
+        const rawLanguage = sourceClass.slice('language-'.length).toLowerCase();
+        const language = aliases[rawLanguage] || rawLanguage;
+        const canonicalClass = 'language-' + language;
+        if (canonicalClass !== sourceClass) {
+          block.classList.remove(sourceClass);
+          block.classList.add(canonicalClass);
+        }
+
+        const pre = block.parentElement;
+        if (pre && !pre.querySelector(':scope > .astr-code-language')) {
+          const label = document.createElement('span');
+          label.className = 'astr-code-language';
+          label.textContent = labels[rawLanguage] || labels[language] || rawLanguage.toUpperCase();
+          pre.insertBefore(label, block);
+        }
+
+        if (typeof window.hljs.getLanguage === 'function' && window.hljs.getLanguage(language)) {
+          window.hljs.highlightElement(block);
+        }
+      });
+    } catch (error) {
+      console.warn('AstrBot code highlighting failed', error);
+    } finally {
+      finish();
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', highlightCode, {once: true});
+  } else {
+    highlightCode();
+  }
+})();
+</script>
+"""
+
+
+def _build_code_highlight_assets(
+    encoded_script: str, theme_name: str, theme_source: str
+) -> str:
+    loader = (
+        _CODE_HIGHLIGHT_LOADER_TEMPLATE.replace(
+            "__ASTR_CODE_ALIASES__",
+            json.dumps(_CODE_LANGUAGE_ALIASES, ensure_ascii=True),
+        )
+        .replace(
+            "__ASTR_CODE_LABELS__",
+            json.dumps(_CODE_LANGUAGE_LABELS, ensure_ascii=True),
+        )
+        .replace("__ASTR_HIGHLIGHT_SOURCE__", repr(encoded_script))
+    )
+    return f"""
+<style id="astrbot-code-highlight-theme" data-theme="{theme_name}">
+{theme_source}
+pre > code.hljs {{
+  display: block;
+  padding: 0;
+  overflow: visible;
+  color: inherit;
+  background: transparent;
+}}
+pre > .astr-code-language {{
+  display: block;
+  margin: 0 0 0.65em;
+  color: inherit;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 0.72em;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: normal;
+  opacity: 0.68;
+  user-select: none;
+}}
+</style>
+{loader}
+"""
 
 
 def _contains_math(content: str) -> bool:
@@ -100,6 +257,7 @@ class LatexRenderPlugin(Star):
         self.gif_fps = config.get("gif_fps", 15)
         # 背景图缓存（按相对路径缓存 data URL 和尺寸）
         self._bg_asset_cache: dict[str, tuple[str, tuple[int, int]]] = {}
+        self._code_highlight_assets: dict[str, tuple[str, str] | None] = {}
         self._bg_image_size: tuple[int, int] | None = None
         self._bg_round_robin_index = 0
         self._active_renders = 0
@@ -1211,6 +1369,63 @@ window.MathJax = {
 
         return math_assets + html_content
 
+    def _load_code_highlight_assets(self, theme_name: str) -> tuple[str, str] | None:
+        """Load and cache the pinned local Highlight.js bundle and one theme."""
+
+        cache = getattr(self, "_code_highlight_assets", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._code_highlight_assets = cache
+        if theme_name in cache:
+            return cache[theme_name]
+
+        asset_dir = os.path.join(_PLUGIN_DIR, "assets", "highlight")
+        script_path = os.path.join(asset_dir, "highlight.min.js")
+        theme_path = os.path.join(asset_dir, "styles", f"{theme_name}.css")
+        try:
+            with open(script_path, encoding="utf-8") as script_file:
+                script_source = script_file.read()
+            with open(theme_path, encoding="utf-8") as theme_file:
+                theme_source = theme_file.read()
+        except OSError as exc:
+            logger.warning(f"[HTML渲染] 读取本地代码高亮资源失败: {exc}")
+            cache[theme_name] = None
+            return None
+
+        encoded_script = base64.b64encode(script_source.encode("utf-8")).decode(
+            "ascii"
+        )
+        cache[theme_name] = (encoded_script, theme_source)
+        logger.info(
+            f"[HTML渲染] 已加载本地 Highlight.js 11.11.2: {theme_name}"
+        )
+        return cache[theme_name]
+
+    def _inject_code_highlight_assets(self, html_content: str, scene: str) -> str:
+        """Highlight explicitly labelled fenced code without language guessing."""
+
+        if (
+            "data-astrbot-code-highlight-loader" in html_content
+            or not re.search(
+                r'<pre\b[^>]*>\s*<code\b[^>]*class=["\'][^"\']*\blanguage-',
+                html_content,
+                re.IGNORECASE,
+            )
+        ):
+            return html_content
+
+        theme_name = _CODE_THEME_BY_SCENE.get(str(scene), "github")
+        assets = self._load_code_highlight_assets(theme_name)
+        if not assets:
+            return html_content
+        encoded_script, theme_source = assets
+        code_assets = _build_code_highlight_assets(
+            encoded_script, theme_name, theme_source
+        )
+        if "</head>" in html_content:
+            return html_content.replace("</head>", code_assets + "</head>", 1)
+        return code_assets + html_content
+
     def _get_background_render_mode(self) -> str:
         mode = (
             str(self.config.get("background_render_mode", "ambient") or "ambient")
@@ -1805,31 +2020,21 @@ body > * {{
             self._active_renders -= 1
             semaphore.release()
 
-    async def _render_content_inner(
+    def _prepare_render_document(
         self,
         content: str,
         specified_template: str | None,
         user_id: str | None,
-        is_gif: bool,
-        *,
-        layout: str | None,
         style_overrides: dict | None,
         template_html_override: str | None,
-    ) -> RenderResult:
-        if time.monotonic() < self._browser_cooldown_until:
-            remaining = int(self._browser_cooldown_until - time.monotonic()) + 1
-            raise RenderFailure(
-                "browser_cooldown",
-                f"浏览器连续失败，正在冷却，请 {remaining} 秒后重试",
-            )
+    ) -> tuple[str, dict, str, bool]:
+        """Select the template and build the final browser-ready HTML."""
 
         try:
             template_name = self._select_template(content, specified_template, user_id)
         except (ValueError, FileNotFoundError) as exc:
             raise RenderFailure("invalid_template", str(exc)) from exc
-        logger.debug(f"HTML渲染: 使用模板 {template_name}, GIF模式: {is_gif}")
         template_metadata = self.template_mgr.get_template_metadata(template_name)
-
         trusted_mode = bool(self.config.get("trusted_html_mode", False))
         has_own_style = trusted_mode and bool(
             re.search(r"<(?:style|html)\b", content, re.IGNORECASE)
@@ -1841,6 +2046,10 @@ body > * {{
             style_overrides=style_overrides,
             template_html_override=template_html_override,
         )
+        if not has_own_style:
+            full_html = self._inject_code_highlight_assets(
+                full_html, str(template_metadata.get("scene", ""))
+            )
         if self.config.get("enable_math", True) and _contains_math(content):
             full_html = self._inject_math_assets(full_html)
 
@@ -1852,6 +2061,50 @@ body > * {{
                 full_html = self._inject_background_image(
                     full_html, bg_data_url, bg_render_mode
                 )
+        return template_name, template_metadata, full_html, trusted_mode
+
+    def _resolve_fixed_page_size(
+        self,
+        template_metadata: dict,
+        style_overrides: dict | None,
+    ) -> dict | None:
+        """Return a normalized copy of fixed-page template metadata."""
+
+        fixed_page_size = template_metadata.get("fixed_page")
+        if not isinstance(fixed_page_size, dict):
+            return None
+
+        fixed_page_size = dict(fixed_page_size)
+        raw_margin_y = (
+            style_overrides.get("paper_margin_y")
+            if style_overrides and "paper_margin_y" in style_overrides
+            else self.config.get(
+                "paper_margin_y",
+                int(fixed_page_size.get("top_margin", 76)),
+            )
+        )
+        try:
+            margin_y = int(raw_margin_y)
+        except (TypeError, ValueError):
+            margin_y = int(fixed_page_size.get("top_margin", 76))
+        margin_y = max(24, min(margin_y, 180))
+        fixed_page_size["top_margin"] = margin_y
+        fixed_page_size["bottom_margin"] = margin_y
+        fixed_page_size["content_height"] = max(
+            400, int(fixed_page_size.get("height", 1123)) - 2 * margin_y
+        )
+        return fixed_page_size
+
+    def _build_render_options(
+        self,
+        full_html: str,
+        template_metadata: dict,
+        is_gif: bool,
+        layout: str | None,
+        style_overrides: dict | None,
+        trusted_mode: bool,
+    ) -> RenderOptions:
+        """Translate plugin configuration into the low-level render contract."""
 
         filename_base = f"render_{uuid.uuid4().hex[:12]}"
         output_path = os.path.join(self.IMAGE_CACHE_DIR, f"{filename_base}.jpg")
@@ -1876,29 +2129,10 @@ body > * {{
                 f"未知布局 {normalized_layout}，仅支持 auto、single",
             )
 
-        fixed_page_size = template_metadata.get("fixed_page")
-        if isinstance(fixed_page_size, dict):
-            fixed_page_size = dict(fixed_page_size)
-            raw_margin_y = (
-                style_overrides.get("paper_margin_y")
-                if style_overrides and "paper_margin_y" in style_overrides
-                else self.config.get(
-                    "paper_margin_y",
-                    int(fixed_page_size.get("top_margin", 76)),
-                )
-            )
-            try:
-                margin_y = int(raw_margin_y)
-            except (TypeError, ValueError):
-                margin_y = int(fixed_page_size.get("top_margin", 76))
-            margin_y = max(24, min(margin_y, 180))
-            fixed_page_size["top_margin"] = margin_y
-            fixed_page_size["bottom_margin"] = margin_y
-            fixed_page_size["content_height"] = max(
-                400, int(fixed_page_size.get("height", 1123)) - 2 * margin_y
-            )
-
-        render_kwargs = dict(
+        fixed_page_size = self._resolve_fixed_page_size(
+            template_metadata, style_overrides
+        )
+        return RenderOptions(
             html_content=full_html,
             output_image_path=output_path,
             scale=scale,
@@ -1913,23 +2147,36 @@ body > * {{
                 "max_output_bytes", 6 * 1024 * 1024, 100_000, 50 * 1024 * 1024
             ),
             show_page_numbers=bool(self.config.get("show_page_numbers", True)),
+            page_number_bottom_margin=self._page_number_bottom_margin(
+                template_metadata
+            ),
             allow_remote_assets=bool(
                 trusted_mode and self.config.get("allow_remote_assets", False)
             ),
             fixed_page_size=fixed_page_size,
         )
 
-        browser_result = await html_to_image_playwright(RenderOptions(**render_kwargs))
-        normalized = self._normalize_browser_result(browser_result, output_path)
+    @staticmethod
+    def _page_number_bottom_margin(template_metadata: dict) -> int:
+        """Keep page numbers visually aligned with each template footer."""
+
+        scene = str(template_metadata.get("scene", ""))
+        return {"knowledge": 24, "custom": 8}.get(scene, 20)
+
+    async def _run_browser_render(self, options: RenderOptions) -> BrowserRenderResult:
+        """Render once, retry a disconnected browser once, then classify failure."""
+
+        browser_result = await html_to_image_playwright(options)
+        normalized = self._normalize_browser_result(
+            browser_result, options.output_image_path
+        )
         if not normalized:
-            # 浏览器断开后底层会清空实例；只重试一次。
             if normalized.error_code == "browser_error":
                 logger.warning("[HTML渲染] 浏览器渲染失败，重建后重试一次")
-                browser_result = await html_to_image_playwright(
-                    RenderOptions(**render_kwargs)
+                browser_result = await html_to_image_playwright(options)
+                normalized = self._normalize_browser_result(
+                    browser_result, options.output_image_path
                 )
-                normalized = self._normalize_browser_result(browser_result, output_path)
-
         if not normalized:
             if normalized.error_code == "browser_error":
                 self._browser_failure_count += 1
@@ -1941,6 +2188,15 @@ body > * {{
                 normalized.error_code or "browser_error",
                 normalized.error_message or "Chromium 渲染失败",
             )
+        return normalized
+
+    def _finalize_render_result(
+        self,
+        normalized: BrowserRenderResult,
+        template_name: str,
+        layout: str,
+    ) -> RenderResult:
+        """Validate browser output and update plugin-level render state."""
 
         self._browser_failure_count = 0
         self._browser_cooldown_until = 0.0
@@ -1956,7 +2212,7 @@ body > * {{
         self._last_render_metrics = {
             **normalized.metrics,
             "template": template_name,
-            "layout": normalized_layout,
+            "layout": layout,
             "image_count": len(images),
         }
         self._last_render_error = {}
@@ -1965,6 +2221,47 @@ body > * {{
             template=template_name,
             warnings=normalized.warnings,
             metrics=self._last_render_metrics,
+        )
+
+    async def _render_content_inner(
+        self,
+        content: str,
+        specified_template: str | None,
+        user_id: str | None,
+        is_gif: bool,
+        *,
+        layout: str | None,
+        style_overrides: dict | None,
+        template_html_override: str | None,
+    ) -> RenderResult:
+        if time.monotonic() < self._browser_cooldown_until:
+            remaining = int(self._browser_cooldown_until - time.monotonic()) + 1
+            raise RenderFailure(
+                "browser_cooldown",
+                f"浏览器连续失败，正在冷却，请 {remaining} 秒后重试",
+            )
+
+        template_name, metadata, full_html, trusted_mode = (
+            self._prepare_render_document(
+                content,
+                specified_template,
+                user_id,
+                style_overrides,
+                template_html_override,
+            )
+        )
+        logger.debug(f"HTML渲染: 使用模板 {template_name}, GIF模式: {is_gif}")
+        options = self._build_render_options(
+            full_html,
+            metadata,
+            is_gif,
+            layout,
+            style_overrides,
+            trusted_mode,
+        )
+        normalized = await self._run_browser_render(options)
+        return self._finalize_render_result(
+            normalized, template_name, options.layout
         )
 
     def _ensure_render_state(self) -> None:

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.security import sanitize_html_fragment
+
 
 def test_safe_markdown_removes_executable_html_and_keeps_semantics(plugin_main):
     rendered = plugin_main.markdown_to_html(
@@ -24,6 +26,29 @@ def test_safe_markdown_removes_executable_html_and_keeps_semantics(plugin_main):
     assert "onmouseover" not in rendered
     assert "<q>保留对白</q>" in rendered
     assert 'class="astr-math-inline"' in rendered
+
+
+@pytest.mark.parametrize("language", ["python", "c++", "c#", "foo_bar-2"])
+def test_safe_html_keeps_one_valid_code_language_class(language: str) -> None:
+    rendered = sanitize_html_fragment(
+        f'<pre><code class="ignored language-{language} extra" '
+        'onclick="alert(1)">code</code></pre>'
+    )
+
+    assert rendered == f'<pre><code class="language-{language}">code</code></pre>'
+
+
+def test_safe_html_rejects_invalid_or_oversized_code_language_classes() -> None:
+    oversized = "x" * 33
+    rendered = sanitize_html_fragment(
+        '<pre><code class="language-python"><b>safe</b></code></pre>'
+        f'<pre><code class="language-{oversized} language-js:evil">plain</code></pre>'
+    )
+
+    assert rendered == (
+        '<pre><code class="language-python"><b>safe</b></code></pre>'
+        "<pre><code>plain</code></pre>"
+    )
 
 
 def test_input_budget_is_rejected_before_browser_work(plugin, plugin_main):

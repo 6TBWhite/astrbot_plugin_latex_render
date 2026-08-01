@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import importlib
 import os
 from pathlib import Path
 
@@ -150,3 +151,127 @@ def test_real_chromium_renders_distinct_aurora_custom_starter(
         assert rendered.height >= 500
         mean = ImageStat.Stat(rendered.convert("RGB")).mean
         assert sum(mean) / len(mean) < 110
+
+
+def test_real_chromium_highlights_explicit_languages_across_templates(
+    plugin,
+    plugin_main,
+    tmp_path,
+) -> None:
+    plugin.template_mgr = plugin_main.TemplateManager(
+        str(Path(__file__).resolve().parents[1] / "templates"),
+        str(tmp_path / "custom_templates"),
+    )
+    plugin.template_mgr.ensure_custom_slot()
+    plugin.template_mgr.update_template_id_map()
+    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    source = """
+```python
+def greet(name):
+    return f"hello {name}"
+```
+
+```js
+const answer = "forty-two";
+```
+
+```json
+{"answer": 42}
+```
+
+```sh
+if test -n "$HOME"; then echo ready; fi
+```
+
+```c++
+int main() { return 0; }
+```
+
+```mysterylang
+plain unknown language
+```
+
+```
+plain unlabelled code
+```
+"""
+
+    async def inspect_templates():
+        states = {}
+        novel_result = None
+        try:
+            await plugin_main.init_browser()
+            browser = await renderer._get_browser()
+            assert browser is not None
+            for template in ("classic", "novel", "paper", "custom"):
+                _, _, html, _ = plugin._prepare_render_document(
+                    source, template, "user-1", None, None
+                )
+                context = await browser.new_context(viewport={"width": 794, "height": 800})
+                page = await context.new_page()
+                try:
+                    await renderer._install_network_policy(page)
+                    await page.set_content(html, wait_until="domcontentloaded")
+                    await renderer._prepare_page_for_capture(page, 794)
+                    states[template] = await page.evaluate(
+                        """() => ({
+                            ready: window.__ASTR_CODE_HIGHLIGHT_READY__,
+                            theme: document.querySelector(
+                                '#astrbot-code-highlight-theme'
+                            )?.dataset.theme,
+                            blocks: Array.from(document.querySelectorAll('pre > code')).map(
+                                block => ({
+                                    language: Array.from(block.classList).find(
+                                        name => name.startsWith('language-')
+                                    ) || '',
+                                    highlighted: block.classList.contains('hljs'),
+                                    tokens: block.querySelectorAll('[class^="hljs-"]').length,
+                                    label: block.parentElement.querySelector(
+                                        ':scope > .astr-code-language'
+                                    )?.textContent || ''
+                                })
+                            )
+                        })"""
+                    )
+                finally:
+                    await context.close()
+
+            novel_result = await plugin._render_content(
+                source, "novel", "user-1", False
+            )
+            return states, novel_result
+        finally:
+            await plugin_main.close_browser()
+
+    states, novel_result = asyncio.run(inspect_templates())
+
+    expected_themes = {
+        "classic": "github-dark",
+        "novel": "docco",
+        "paper": "github",
+        "custom": "night-owl",
+    }
+    for template, state in states.items():
+        assert state["ready"] is True
+        assert state["theme"] == expected_themes[template]
+        assert [block["label"] for block in state["blocks"]] == [
+            "Python",
+            "JavaScript",
+            "JSON",
+            "Bash",
+            "C++",
+            "MYSTERYLANG",
+            "",
+        ]
+        assert all(block["highlighted"] for block in state["blocks"][:5])
+        assert all(block["tokens"] > 0 for block in state["blocks"][:5])
+        assert state["blocks"][5]["highlighted"] is False
+        assert state["blocks"][5]["tokens"] == 0
+        assert state["blocks"][6]["highlighted"] is False
+        assert state["blocks"][6]["tokens"] == 0
+
+    assert novel_result.template == "novel"
+    assert novel_result.images
+    with PILImage.open(novel_result.images[0].path) as rendered:
+        assert rendered.format == "JPEG"
+        assert rendered.width == 1200

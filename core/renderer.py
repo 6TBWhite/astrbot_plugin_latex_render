@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -61,7 +62,7 @@ def _get_font_mime(path: str) -> str:
 
 # GIF 合成支持
 try:
-    from PIL import Image as PILImage, ImageChops, ImageDraw
+    from PIL import Image as PILImage, ImageChops, ImageDraw, ImageFont, ImageStat
 
     GIF_AVAILABLE = True
 except ImportError:
@@ -198,6 +199,30 @@ async def _stabilize_layout(page, rounds: int = 3) -> int:
                             return;
                         }
                         setTimeout(tick, 50);
+                    };
+                    tick();
+                });
+            }"""
+        )
+        await page.evaluate(
+            """() => {
+                const loader = document.querySelector('[data-astrbot-code-highlight-loader]');
+                if (!loader || window.__ASTR_CODE_HIGHLIGHT_READY__) {
+                    return Promise.resolve();
+                }
+                return new Promise(resolve => {
+                    const started = Date.now();
+                    const tick = () => {
+                        if (window.__ASTR_CODE_HIGHLIGHT_READY__) {
+                            resolve();
+                            return;
+                        }
+                        if (Date.now() - started > 3000) {
+                            window.__ASTR_CODE_HIGHLIGHT_READY__ = true;
+                            resolve();
+                            return;
+                        }
+                        setTimeout(tick, 25);
                     };
                     tick();
                 });
@@ -469,27 +494,91 @@ async def _calculate_page_slices(
     return slices, hard_breaks
 
 
-def _add_page_number(path: str, page_number: int, page_count: int) -> None:
+def _page_number_font_size(scale: int) -> int:
+    return max(14, 14 * max(1, int(scale)))
+
+
+def _load_page_number_font(size: int):
+    candidates = (
+        "DejaVuSans.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    )
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _page_number_position(
+    image_size: tuple[int, int],
+    text_bbox: tuple[int, int, int, int],
+    scale: int,
+    bottom_margin: int = 20,
+) -> tuple[int, int]:
+    image_width, image_height = image_size
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    scaled_bottom_margin = max(1, int(bottom_margin)) * max(1, int(scale))
+    x = (image_width - text_width) // 2 - text_bbox[0]
+    y = image_height - scaled_bottom_margin - text_height - text_bbox[1]
+    return max(0, x), max(0, y)
+
+
+def _page_number_color(
+    image,
+    text_box: tuple[int, int, int, int],
+    scale: int,
+) -> tuple[int, int, int, int]:
+    padding = 4 * max(1, int(scale))
+    sample_box = (
+        max(0, text_box[0] - padding),
+        max(0, text_box[1] - padding),
+        min(image.width, text_box[2] + padding),
+        min(image.height, text_box[3] + padding),
+    )
+    luminance = ImageStat.Stat(image.crop(sample_box).convert("L")).mean[0]
+    if luminance >= 145:
+        return (42, 42, 42, 190)
+    return (246, 242, 232, 220)
+
+
+def _add_page_number(
+    path: str,
+    page_number: int,
+    page_count: int,
+    scale: int,
+    bottom_margin: int = 20,
+) -> None:
     if not GIF_AVAILABLE or page_count <= 1:
         return
     try:
         with PILImage.open(path) as source:
             image = source.convert("RGB")
-            draw = ImageDraw.Draw(image)
-            label = f"{page_number} / {page_count}"
-            bbox = draw.textbbox((0, 0), label)
-            width = bbox[2] - bbox[0]
-            height = bbox[3] - bbox[1]
-            x = max(8, image.width - width - 22)
-            y = max(8, image.height - height - 18)
-            draw.rounded_rectangle(
-                (x - 8, y - 5, x + width + 8, y + height + 5),
-                radius=6,
-                fill=(255, 255, 255),
-                outline=(190, 190, 190),
+            font = _load_page_number_font(_page_number_font_size(scale))
+            label = f"— {page_number} / {page_count} —"
+            measure = ImageDraw.Draw(image)
+            bbox = measure.textbbox((0, 0), label, font=font)
+            x, y = _page_number_position(
+                image.size, bbox, scale, bottom_margin=bottom_margin
             )
-            draw.text((x, y), label, fill=(70, 70, 70))
-            image.save(path, "JPEG", quality=90, optimize=True)
+            text_box = (
+                x + bbox[0],
+                y + bbox[1],
+                x + bbox[2],
+                y + bbox[3],
+            )
+            color = _page_number_color(image, text_box, scale)
+            overlay = PILImage.new("RGBA", image.size, (0, 0, 0, 0))
+            ImageDraw.Draw(overlay).text((x, y), label, font=font, fill=color)
+            rendered = PILImage.alpha_composite(image.convert("RGBA"), overlay)
+            rendered.convert("RGB").save(path, "JPEG", quality=90, optimize=True)
     except Exception as exc:
         logger.warning(f"[HTML渲染] 添加页码失败: {exc}")
 
@@ -621,20 +710,15 @@ def get_renderer_status() -> dict:
     }
 
 
-async def _detect_animated_region(
+async def _detect_css_animated_region(
     page,
-    scale: int,
     viewport_width: int,
     viewport_height: int,
-) -> Optional[dict]:
-    """
-    检测页面中的动画区域。
-    策略1：JS 查找带 animation 的元素的公共父容器
-    策略2：像素对比回退
-    """
-    # ====== 策略1：JS 查找动画容器 ======
+) -> tuple[bool, Optional[dict]]:
+    """Locate a CSS animation container; report whether the strategy decided."""
+
     try:
-        clip_from_js = await page.evaluate("""() => {
+        bounds = await page.evaluate("""() => {
             const allEls = document.querySelectorAll('*');
             const animatedEls = [];
             for (const el of allEls) {
@@ -667,34 +751,39 @@ async def _detect_animated_region(
                 height: rect.height
             };
         }""")
+        if not bounds:
+            return False, None
 
-        if clip_from_js:
-            pad = 10
-            clip = {
-                "x": max(0, clip_from_js["x"] - pad),
-                "y": max(0, clip_from_js["y"] - pad),
-                "width": min(clip_from_js["width"] + pad * 2, viewport_width),
-                "height": min(clip_from_js["height"] + pad * 2, viewport_height),
-            }
+        padding = 10
+        clip = {
+            "x": max(0, bounds["x"] - padding),
+            "y": max(0, bounds["y"] - padding),
+            "width": min(bounds["width"] + padding * 2, viewport_width),
+            "height": min(bounds["height"] + padding * 2, viewport_height),
+        }
+        ratio = clip["width"] * clip["height"] / (
+            viewport_width * viewport_height
+        )
+        if ratio > 0.8:
+            logger.info(f"[GIF] 动画容器占页面 {ratio * 100:.0f}%，不裁切")
+            return True, None
 
-            page_area = viewport_width * viewport_height
-            clip_area = clip["width"] * clip["height"]
-            ratio = clip_area / page_area
+        logger.info(
+            f"[GIF] JS定位动画容器: {clip['width']:.0f}×{clip['height']:.0f} CSS px "
+            f"(占比 {ratio * 100:.1f}%)"
+        )
+        return True, clip
+    except Exception as exc:
+        logger.warning(f"[GIF] JS定位失败: {exc}")
+        return False, None
 
-            if ratio > 0.8:
-                logger.info(f"[GIF] 动画容器占页面 {ratio * 100:.0f}%，不裁切")
-                return None
 
-            logger.info(
-                f"[GIF] JS定位动画容器: {clip['width']:.0f}×{clip['height']:.0f} CSS px "
-                f"(占比 {ratio * 100:.1f}%)"
-            )
-            return clip
+async def _detect_pixel_animated_region(
+    page,
+    scale: int,
+) -> Optional[dict]:
+    """Locate animation through a two-frame pixel comparison."""
 
-    except Exception as e:
-        logger.warning(f"[GIF] JS定位失败: {e}")
-
-    # ====== 策略2：像素对比回退 ======
     try:
         has_animations = await page.evaluate("document.getAnimations().length > 0")
         if has_animations:
@@ -748,10 +837,25 @@ async def _detect_animated_region(
 
         logger.info("[GIF] 未检测到动画")
         return None
-
-    except Exception as e:
-        logger.warning(f"[GIF] 像素对比失败: {e}")
+    except Exception as exc:
+        logger.warning(f"[GIF] 像素对比失败: {exc}")
         return None
+
+
+async def _detect_animated_region(
+    page,
+    scale: int,
+    viewport_width: int,
+    viewport_height: int,
+) -> Optional[dict]:
+    """Detect an animated crop, preferring CSS metadata over pixel comparison."""
+
+    decided, clip = await _detect_css_animated_region(
+        page, viewport_width, viewport_height
+    )
+    if decided:
+        return clip
+    return await _detect_pixel_animated_region(page, scale)
 
 
 async def _get_animation_duration(page) -> float:
@@ -792,8 +896,286 @@ class RenderOptions:
     max_pages: int = 8
     max_output_bytes: int = 6 * 1024 * 1024
     show_page_numbers: bool = True
+    page_number_bottom_margin: int = 20
     allow_remote_assets: bool = False
     fixed_page_size: dict | None = None
+
+
+async def _handle_font_route(route) -> None:
+    """Serve a mapped local font or block the external request."""
+
+    url = route.request.url
+    local_path = _FONT_MANIFEST.get(url)
+    if local_path and os.path.exists(local_path):
+        try:
+            with open(local_path, "rb") as font_file:
+                body = font_file.read()
+            await route.fulfill(
+                status=200,
+                content_type=_get_font_mime(local_path),
+                body=body,
+            )
+            return
+        except Exception as exc:
+            logger.warning(f"[HTML渲染] 读取本地字体失败 {local_path}: {exc}")
+
+    await route.abort()
+
+
+async def _install_font_routes(page) -> None:
+    """Install deterministic local-only routes for Google Fonts assets."""
+
+    _load_font_manifest()
+    await page.route("**://fonts.gstatic.com/**", _handle_font_route)
+    await page.route("**://fonts.googleapis.com/**", lambda route: route.abort())
+
+
+def _resolve_static_layout(
+    options: RenderOptions, full_height: int
+) -> tuple[str, int, bool]:
+    """Normalize the layout and decide whether the page needs pagination."""
+
+    layout = str(options.layout or "auto").strip().lower()
+    if layout not in {"auto", "single", "paged"}:
+        layout = "auto"
+
+    page_height = options.max_page_height
+    if options.fixed_page_size:
+        layout = "paged"
+        page_height = int(
+            options.fixed_page_size.get("content_height", page_height)
+        )
+    elif layout == "single" and full_height > page_height * options.max_pages:
+        raise ValueError(
+            f"单页高度 {full_height}px 超过绝对上限 "
+            f"{page_height * options.max_pages}px"
+        )
+
+    should_paginate = layout == "paged" or (
+        layout == "auto" and full_height > page_height
+    )
+    return layout, page_height, should_paginate
+
+
+async def _plan_page_capture(
+    page,
+    options: RenderOptions,
+    full_height: int,
+    page_height: int,
+) -> tuple[list[tuple[int, int]] | None, set[int]]:
+    """Build either clip windows or DOM page containers for page capture."""
+
+    if options.fixed_page_size:
+        page_windows, hard_breaks = await _calculate_page_slices(
+            page,
+            full_height,
+            max(400, int(page_height)),
+            max(1, int(options.max_pages)),
+        )
+        return page_windows, hard_breaks
+
+    blocks = await _collect_pagination_blocks(page)
+    groups = _group_pagination_blocks(blocks)
+    usable_height = await _measure_page_content_height(page, int(page_height))
+    usable_height = max(400, usable_height - _CAPTURE_BOTTOM_PADDING)
+    page_block_indexes, hard_pages = _pack_into_pages(
+        groups, usable_height, max(1, int(options.max_pages))
+    )
+    hard_breaks = {page_index + 1 for page_index in hard_pages}
+    if len(page_block_indexes) > 1:
+        await _inject_page_containers(page, page_block_indexes, int(page_height))
+        return None, hard_breaks
+    return [(0, full_height)], hard_breaks
+
+
+def _page_output_path(output_image_path: str, index: int) -> str:
+    """Keep the legacy page naming scheme used by existing consumers."""
+
+    base, extension = os.path.splitext(output_image_path)
+    extension = extension or ".jpg"
+    return output_image_path if index == 1 else f"{base}_p{index}{extension}"
+
+
+async def _capture_paginated_images(
+    page,
+    options: RenderOptions,
+    full_height: int,
+    page_height: int,
+) -> list[str]:
+    """Capture and post-process all pages for a paginated render."""
+
+    page_windows, hard_breaks = await _plan_page_capture(
+        page, options, full_height, page_height
+    )
+    page_count = (
+        len(page_windows)
+        if page_windows is not None
+        else await page.locator(".page, .aurora-card").count()
+    )
+    output_paths: list[str] = []
+    for index in range(page_count):
+        path = _page_output_path(options.output_image_path, index)
+        if page_windows is not None:
+            start, end = page_windows[index]
+            await page.screenshot(
+                path=path,
+                clip={
+                    "x": 0,
+                    "y": start,
+                    "width": options.width,
+                    "height": end - start,
+                },
+                type="jpeg",
+                quality=92,
+            )
+        else:
+            await (
+                page.locator(".page, .aurora-card")
+                .nth(index)
+                .screenshot(path=path, type="jpeg", quality=92)
+            )
+        output_paths.append(path)
+
+    if options.fixed_page_size:
+        for path in output_paths:
+            _pad_fixed_canvas(
+                path,
+                int(options.fixed_page_size.get("width", options.width)),
+                int(options.fixed_page_size.get("height", 1123)),
+                int(options.fixed_page_size.get("top_margin", 76)),
+                options.scale,
+            )
+
+    for index, path in enumerate(output_paths, start=1):
+        _add_continuation_marker(
+            path,
+            continues_from_previous=(index - 1) in hard_breaks,
+            continues_to_next=index in hard_breaks,
+        )
+    if options.show_page_numbers and len(output_paths) > 1:
+        for index, path in enumerate(output_paths, start=1):
+            _add_page_number(
+                path,
+                index,
+                len(output_paths),
+                options.scale,
+                bottom_margin=options.page_number_bottom_margin,
+            )
+    return output_paths
+
+
+async def _render_static_images(
+    page,
+    options: RenderOptions,
+    full_height: int,
+    started_at: float,
+) -> tuple[list[str], list[str]]:
+    """Render static output and enforce the configured image budget."""
+
+    _, page_height, should_paginate = _resolve_static_layout(options, full_height)
+    if should_paginate:
+        output_paths = await _capture_paginated_images(
+            page, options, full_height, page_height
+        )
+    else:
+        await page.screenshot(
+            path=options.output_image_path,
+            full_page=True,
+            type="jpeg",
+            quality=92,
+        )
+        output_paths = [options.output_image_path]
+
+    warnings: list[str] = []
+    for path in output_paths:
+        warning = _enforce_image_budget(path, options.max_output_bytes)
+        if warning and warning not in warnings:
+            warnings.append(warning)
+    logger.info(f"[性能] 静态渲染总耗时: {time.perf_counter() - started_at:.3f}s")
+    return output_paths, warnings
+
+
+async def _record_gif_animation(page, options: RenderOptions, clip: dict) -> str | None:
+    """Record the detected animation region by seeking the browser timeline."""
+
+    gif_path = os.path.splitext(options.output_image_path)[0] + ".gif"
+    animation_duration_ms = await _get_animation_duration(page)
+    record_duration_ms = min(options.duration * 1000, animation_duration_ms)
+    frame_count = max(int(record_duration_ms / 1000 * options.fps), 10)
+    frame_interval_ms = record_duration_ms / frame_count
+    logger.info(
+        f"[GIF] 时间轴跳帧模式：动画周期={animation_duration_ms:.0f}ms，"
+        f"录制={record_duration_ms:.0f}ms，{frame_count}帧，"
+        f"裁切={clip['width']:.0f}×{clip['height']:.0f}"
+    )
+
+    await page.evaluate("document.getAnimations().forEach(a => a.pause())")
+    frames = []
+    record_started_at = time.perf_counter()
+    for index in range(frame_count):
+        target_time = index * frame_interval_ms
+        await page.evaluate(
+            f"document.getAnimations().forEach(a => a.currentTime = {target_time})"
+        )
+        await asyncio.sleep(0.02)
+        frame_bytes = await page.screenshot(clip=clip, type="jpeg", quality=85)
+        frame = PILImage.open(io.BytesIO(frame_bytes)).convert("RGB")
+        frames.append(frame.convert("P", palette=PILImage.ADAPTIVE, colors=256))
+    await page.evaluate("document.getAnimations().forEach(a => a.play())")
+    logger.info(
+        f"[GIF] 跳帧完成：{len(frames)}帧，"
+        f"耗时{time.perf_counter() - record_started_at:.1f}s"
+    )
+
+    output_dir = os.path.dirname(options.output_image_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    if not frames:
+        return None
+
+    compose_started_at = time.perf_counter()
+    frames[0].save(
+        gif_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=int(frame_interval_ms),
+        loop=0,
+        optimize=True,
+    )
+    logger.info(f"[GIF] 合成完成，耗时{time.perf_counter() - compose_started_at:.1f}s")
+    return gif_path
+
+
+async def _render_gif_images(
+    page,
+    options: RenderOptions,
+    full_height: int,
+    started_at: float,
+) -> tuple[list[str], list[str]]:
+    """Render the full static image and an optional animated crop."""
+
+    if not GIF_AVAILABLE:
+        logger.warning("Pillow 未安装，回退到静态截图")
+        await page.screenshot(path=options.output_image_path, full_page=True)
+    else:
+        await page.screenshot(path=options.output_image_path, full_page=True)
+        logger.info("[GIF] 已生成静态全页截图")
+        clip = await _detect_animated_region(
+            page, options.scale, options.width, full_height
+        )
+        if clip:
+            await _record_gif_animation(page, options, clip)
+        else:
+            logger.info("[GIF] 未检测到动画区域，仅输出静态图")
+
+    logger.info(f"[性能] GIF渲染总耗时: {time.perf_counter() - started_at:.3f}s")
+    output_paths = []
+    if os.path.exists(options.output_image_path):
+        output_paths.append(options.output_image_path)
+    gif_path = os.path.splitext(options.output_image_path)[0] + ".gif"
+    if os.path.exists(gif_path):
+        output_paths.append(gif_path)
+    return output_paths, []
 
 
 async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResult:
@@ -802,318 +1184,55 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
     复用浏览器实例，每次只创建新页面。
     GIF 模式使用时间轴跳帧：暂停动画 → seek到每帧时间点 → 截图，零等待。
     """
-    html_content = options.html_content
-    output_image_path = options.output_image_path
-    scale = options.scale
-    width = options.width
-    is_gif = options.is_gif
-    duration = options.duration
-    fps = options.fps
-    layout = options.layout
-    max_page_height = options.max_page_height
-    max_pages = options.max_pages
-    max_output_bytes = options.max_output_bytes
-    show_page_numbers = options.show_page_numbers
-    allow_remote_assets = options.allow_remote_assets
-    fixed_page_size = options.fixed_page_size
-
-    import time as _time
-
     global _last_browser_error, _last_render_seconds
-    _t_start = _time.perf_counter()
+    started_at = time.perf_counter()
 
-    page = None
     context = None
     try:
         browser = await _get_browser()
         if browser is None:
             logger.error("[HTML渲染] 无法获取浏览器实例，回退到独立模式")
             return await _fallback_render(
-                html_content,
-                output_image_path,
-                scale,
-                width,
-                is_gif,
-                duration,
-                fps,
-                max_output_bytes=max_output_bytes,
-                allow_remote_assets=allow_remote_assets,
+                options.html_content,
+                options.output_image_path,
+                options.scale,
+                options.width,
+                options.is_gif,
+                options.duration,
+                options.fps,
+                max_output_bytes=options.max_output_bytes,
+                allow_remote_assets=options.allow_remote_assets,
             )
 
         context = await browser.new_context(
-            device_scale_factor=scale,
-            viewport={"width": width, "height": 800},
+            device_scale_factor=options.scale,
+            viewport={"width": options.width, "height": 800},
         )
         page = await context.new_page()
         page.set_default_timeout(15_000)
+        await _install_network_policy(page, options.allow_remote_assets)
+        await _install_font_routes(page)
 
-        await _install_network_policy(page, allow_remote_assets)
-
-        # ===== 字体路由映射：将 Google Fonts 请求重定向到本地文件 =====
-        _load_font_manifest()
-
-        async def _handle_font_route(route):
-            """拦截字体请求，优先使用本地文件"""
-            url = route.request.url
-            local_path = _FONT_MANIFEST.get(url)
-
-            if local_path and os.path.exists(local_path):
-                # 本地字体存在，直接返回
-                try:
-                    with open(local_path, "rb") as f:
-                        body = f.read()
-                    await route.fulfill(
-                        status=200,
-                        content_type=_get_font_mime(local_path),
-                        body=body,
-                    )
-                    return
-                except Exception as e:
-                    logger.warning(f"[HTML渲染] 读取本地字体失败 {local_path}: {e}")
-
-            # 无本地映射或读取失败，阻断请求（避免网络延迟）
-            await route.abort()
-
-        # 拦截 Google Fonts 字体文件请求
-        await page.route("**://fonts.gstatic.com/**", _handle_font_route)
-        # 拦截 Google Fonts CSS 请求（如果模板仍有外部 <link>）
-        await page.route("**://fonts.googleapis.com/**", lambda route: route.abort())
-
-        _t_page = _time.perf_counter()
-
-        # domcontentloaded 足够：纯本地 HTML 无外部资源需要等待
-        await page.set_content(html_content, wait_until="domcontentloaded")
-
-        # 等待一帧让 CSS 动画和布局稳定
-        full_height = await _prepare_page_for_capture(page, width)
-
-        _t_content = _time.perf_counter()
+        page_started_at = time.perf_counter()
+        await page.set_content(options.html_content, wait_until="domcontentloaded")
+        full_height = await _prepare_page_for_capture(page, options.width)
+        content_ready_at = time.perf_counter()
         logger.debug(
-            f"[性能] 页面创建: {_t_page - _t_start:.3f}s, 内容加载: {_t_content - _t_page:.3f}s"
+            f"[性能] 页面创建: {page_started_at - started_at:.3f}s, "
+            f"内容加载: {content_ready_at - page_started_at:.3f}s"
         )
 
-        output_paths: list[str] = []
-        warnings: list[str] = []
-
-        if not is_gif:
-            normalized_layout = str(layout or "auto").strip().lower()
-            if normalized_layout not in {"auto", "single", "paged"}:
-                normalized_layout = "auto"
-
-            if fixed_page_size:
-                normalized_layout = "paged"
-                max_page_height = int(
-                    fixed_page_size.get("content_height", max_page_height)
-                )
-            elif (
-                normalized_layout == "single"
-                and full_height > max_page_height * max_pages
-            ):
-                raise ValueError(
-                    f"单页高度 {full_height}px 超过绝对上限 "
-                    f"{max_page_height * max_pages}px"
-                )
-
-            should_paginate = normalized_layout == "paged" or (
-                normalized_layout == "auto" and full_height > max_page_height
+        if options.is_gif:
+            output_paths, warnings = await _render_gif_images(
+                page, options, full_height, started_at
             )
-            if should_paginate:
-                hard_breaks: set[int] = set()
-                page_windows: list[tuple[int, int]] | None = None
-                if fixed_page_size:
-                    slice_height_budget = max(400, int(max_page_height))
-                    slices, hard_breaks = await _calculate_page_slices(
-                        page,
-                        full_height,
-                        slice_height_budget,
-                        max(1, int(max_pages)),
-                    )
-                    page_windows = slices
-                else:
-                    blocks = await _collect_pagination_blocks(page)
-                    groups = _group_pagination_blocks(blocks)
-                    usable_height = await _measure_page_content_height(
-                        page, int(max_page_height)
-                    )
-                    usable_height = max(400, usable_height - _CAPTURE_BOTTOM_PADDING)
-                    page_block_indexes, hard_pages = _pack_into_pages(
-                        groups, usable_height, max(1, int(max_pages))
-                    )
-                    hard_breaks = {page_index + 1 for page_index in hard_pages}
-                    if len(page_block_indexes) > 1:
-                        await _inject_page_containers(
-                            page, page_block_indexes, int(max_page_height)
-                        )
-                    else:
-                        page_windows = [(0, full_height)]
-
-                base, extension = os.path.splitext(output_image_path)
-                extension = extension or ".jpg"
-                page_count = (
-                    len(page_windows)
-                    if page_windows is not None
-                    else await page.locator(".page, .aurora-card").count()
-                )
-                for index in range(page_count):
-                    path = (
-                        output_image_path
-                        if index == 1
-                        else f"{base}_p{index}{extension}"
-                    )
-                    if page_windows is not None:
-                        start, end = page_windows[index]
-                        await page.screenshot(
-                            path=path,
-                            clip={
-                                "x": 0,
-                                "y": start,
-                                "width": width,
-                                "height": end - start,
-                            },
-                            type="jpeg",
-                            quality=92,
-                        )
-                    else:
-                        await (
-                            page.locator(".page, .aurora-card")
-                            .nth(index)
-                            .screenshot(path=path, type="jpeg", quality=92)
-                        )
-                    output_paths.append(path)
-
-                if fixed_page_size:
-                    for path in output_paths:
-                        _pad_fixed_canvas(
-                            path,
-                            int(fixed_page_size.get("width", width)),
-                            int(fixed_page_size.get("height", 1123)),
-                            int(fixed_page_size.get("top_margin", 76)),
-                            scale,
-                        )
-
-                for index, path in enumerate(output_paths, start=1):
-                    _add_continuation_marker(
-                        path,
-                        continues_from_previous=(index - 1) in hard_breaks,
-                        continues_to_next=index in hard_breaks,
-                    )
-
-                if show_page_numbers and len(output_paths) > 1:
-                    for index, path in enumerate(output_paths, start=1):
-                        _add_page_number(path, index, len(output_paths))
-            else:
-                await page.screenshot(
-                    path=output_image_path,
-                    full_page=True,
-                    type="jpeg",
-                    quality=92,
-                )
-                output_paths.append(output_image_path)
-
-            for path in output_paths:
-                budget_warning = _enforce_image_budget(path, max_output_bytes)
-                if budget_warning and budget_warning not in warnings:
-                    warnings.append(budget_warning)
-
-            _t_end = _time.perf_counter()
-            logger.info(f"[性能] 静态渲染总耗时: {_t_end - _t_start:.3f}s")
         else:
-            if not GIF_AVAILABLE:
-                logger.warning("Pillow 未安装，回退到静态截图")
-                await page.screenshot(path=output_image_path, full_page=True)
-            else:
-                # 展开视口到完整内容高度
-
-                # 1. 先截完整静态图
-                await page.screenshot(path=output_image_path, full_page=True)
-                logger.info("[GIF] 已生成静态全页截图")
-
-                # 2. 检测动画区域
-                clip = await _detect_animated_region(page, scale, width, full_height)
-
-                # 3. 如果有动画区域，用时间轴跳帧录制
-                if clip:
-                    gif_path = os.path.splitext(output_image_path)[0] + ".gif"
-
-                    anim_duration_ms = await _get_animation_duration(page)
-                    record_duration_ms = min(duration * 1000, anim_duration_ms)
-
-                    frame_count = int(record_duration_ms / 1000 * fps)
-                    frame_count = max(frame_count, 10)
-                    frame_interval_ms = record_duration_ms / frame_count
-
-                    logger.info(
-                        f"[GIF] 时间轴跳帧模式：动画周期={anim_duration_ms:.0f}ms，"
-                        f"录制={record_duration_ms:.0f}ms，{frame_count}帧，"
-                        f"裁切={clip['width']:.0f}×{clip['height']:.0f}"
-                    )
-
-                    # 暂停所有动画
-                    await page.evaluate(
-                        "document.getAnimations().forEach(a => a.pause())"
-                    )
-
-                    frames = []
-                    record_start = _time.perf_counter()
-
-                    for i in range(frame_count):
-                        target_time = i * frame_interval_ms
-                        await page.evaluate(
-                            f"document.getAnimations().forEach(a => a.currentTime = {target_time})"
-                        )
-                        await asyncio.sleep(0.02)
-
-                        frame_bytes = await page.screenshot(
-                            clip=clip, type="jpeg", quality=85
-                        )
-                        frame_img = PILImage.open(io.BytesIO(frame_bytes)).convert(
-                            "RGB"
-                        )
-                        frame_img = frame_img.convert(
-                            "P", palette=PILImage.ADAPTIVE, colors=256
-                        )
-                        frames.append(frame_img)
-
-                    # 恢复播放
-                    await page.evaluate(
-                        "document.getAnimations().forEach(a => a.play())"
-                    )
-
-                    record_time = _time.perf_counter() - record_start
-                    logger.info(
-                        f"[GIF] 跳帧完成：{len(frames)}帧，耗时{record_time:.1f}s"
-                    )
-
-                    out_dir = os.path.dirname(output_image_path)
-                    if out_dir:
-                        os.makedirs(out_dir, exist_ok=True)
-
-                    if frames:
-                        compose_start = _time.perf_counter()
-                        frame_display_ms = int(frame_interval_ms)
-                        frames[0].save(
-                            gif_path,
-                            save_all=True,
-                            append_images=frames[1:],
-                            duration=frame_display_ms,
-                            loop=0,
-                            optimize=True,
-                        )
-                        compose_time = _time.perf_counter() - compose_start
-                        logger.info(f"[GIF] 合成完成，耗时{compose_time:.1f}s")
-                else:
-                    logger.info("[GIF] 未检测到动画区域，仅输出静态图")
-
-            _t_end = _time.perf_counter()
-            logger.info(f"[性能] GIF渲染总耗时: {_t_end - _t_start:.3f}s")
-            if os.path.exists(output_image_path):
-                output_paths.append(output_image_path)
-            gif_path = os.path.splitext(output_image_path)[0] + ".gif"
-            if os.path.exists(gif_path):
-                output_paths.append(gif_path)
+            output_paths, warnings = await _render_static_images(
+                page, options, full_height, started_at
+            )
 
         _last_browser_error = ""
-        _last_render_seconds = _t_end - _t_start
+        _last_render_seconds = time.perf_counter() - started_at
         return BrowserRenderResult(
             success=True,
             paths=output_paths,
@@ -1122,12 +1241,12 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
                 "duration_seconds": round(_last_render_seconds, 3),
                 "page_count": len(output_paths),
                 "content_height": full_height,
-                "layout": layout,
+                "layout": options.layout,
             },
         )
 
     except asyncio.CancelledError:
-        _cleanup_output_family(output_image_path)
+        _cleanup_output_family(options.output_image_path)
         raise
     except Exception as e:
         logger.error(f"Playwright 渲染失败: {e}")
@@ -1138,9 +1257,9 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
         # 浏览器可能已崩溃，重置实例
         global _browser_instance
         _browser_instance = None
-        _cleanup_output_family(output_image_path)
+        _cleanup_output_family(options.output_image_path)
         _last_browser_error = str(e)
-        _last_render_seconds = _time.perf_counter() - _t_start
+        _last_render_seconds = time.perf_counter() - started_at
         error_code = (
             "resource_limit"
             if isinstance(e, ValueError) and ("上限" in str(e) or "超过" in str(e))
