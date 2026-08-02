@@ -16,13 +16,16 @@ def test_market_metadata_is_complete_and_consistent() -> None:
 
     assert version_match is not None
     assert metadata["id"] == metadata["name"] == "astrbot_plugin_latex_render"
-    assert metadata["version"] == version_match.group(1) == "1.2.1"
+    assert metadata["version"] == version_match.group(1) == "1.2.2"
     assert metadata["type"] == "star"
     assert metadata["category"] == "工具"
     assert metadata["branch"] == "master"
     assert metadata["license"] == "MIT"
     assert metadata["short_desc"].strip()
     assert metadata["desc"].strip()
+    assert "渲染与模板指南工具" in metadata["desc"]
+    assert "latex_render_to_image" not in metadata["desc"]
+    assert "latex_render_template_guide" not in metadata["desc"]
     assert 3 <= len(metadata["tags"]) <= 6
     assert metadata["requirements"] == []
 
@@ -34,9 +37,10 @@ def test_current_release_is_documented() -> None:
     assert (
         "img.shields.io/github/v/release/6TBWhite/astrbot_plugin_latex_render" in readme
     )
-    assert "当前发布版本为 `1.2.1`" in readme
-    assert "development-v1.2.1" not in readme
+    assert "当前发布版本为 `1.2.2`" in readme
+    assert "development-v1.2.2" not in readme
     assert "支持自动分页与 A4 版式" in readme
+    assert "2026-08-02：v1.2.2 Agent 工具命名空间与模板指南" in changelog
     assert "v1.2.1 代码高亮与页码优化" in changelog
     assert "v1.2.0 固定页高装箱分页" in changelog
     assert "v1.1.0 渲染参数收敛与分页缓冲移除" in changelog

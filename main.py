@@ -45,6 +45,7 @@ from .core.renderer import (
     html_to_image_playwright,
     init_browser,
 )
+from .core.template_guidance import TemplateGuidanceBuilder
 from .core.template_manager import TemplateManager
 from .core.text_processing import markdown_to_html, nl2br, preserve_newlines
 
@@ -1755,6 +1756,34 @@ body > * {{
                 return templates
         return []
 
+    def _get_agent_current_template(self, event: AstrMessageEvent) -> str:
+        available = self._get_available_templates()
+        if not available:
+            return ""
+        try:
+            current_template = self._get_event_template(event)
+        except Exception as exc:
+            logger.warning(f"[HTML渲染] 解析 Agent 当前模板失败: {exc}")
+            return available[0]
+        return current_template if current_template in available else available[0]
+
+    def _build_agent_template_guidance(
+        self,
+        current_template: str = "",
+        template: str = "",
+        *,
+        compact: bool = False,
+    ) -> str:
+        builder = TemplateGuidanceBuilder(
+            self.template_mgr,
+            self._get_available_templates(),
+        )
+        return builder.build(
+            current_template=current_template,
+            template=template,
+            compact=compact,
+        )
+
     def _get_available_background_images(self) -> list[str]:
         image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
         results: list[str] = []
@@ -2796,22 +2825,22 @@ body > * {{
 
     # ==================== LLM 工具 ====================
 
-    @filter.llm_tool(name="render_to_image")
-    async def render_to_image_tool(
+    @filter.llm_tool(name="latex_render_to_image")
+    async def latex_render_to_image_tool(
         self,
         event: AstrMessageEvent,
         content: str = "",
         template: str = "",
         layout: str = "",
     ):
-        """将 Markdown 与 LaTeX 内容渲染为一张或多张图片并发送给用户。
+        """将完整 Markdown、LaTeX、表格和显式语言代码渲染为一张或多张图片，并直接发送给当前用户。
 
-        适合讲题、公式推导、表格、代码和结构化长文；长内容默认自动分页。
+        当用户明确要求图片，或当前任务需要把公式推导、讲解、报告等排版内容以图片交付时调用；不用于文生图。
 
         Args:
-            content(string): 要渲染的完整 Markdown + LaTeX 文本，不要包裹 <render> 标签。
-            template(string): 可选。仅在用户明确指定样式时填写 classic、paper 或 custom；通常留空，沿用用户当前模板。
-            layout(string): 可选。auto 或 single；不指定则使用当前会话偏好，默认 auto。旧值 paged 按 auto 兼容。
+            content(string): 要渲染的完整 Markdown + LaTeX 正文。
+            template(string): 可选。通常留空以沿用当前模板；仅在用户明确指定或已经选定模板时填写。
+            layout(string): 可选。留空沿用当前会话设置；auto（自动分页）或 single（单张长图）。
         """
         if not content or not content.strip():
             yield "⚠️ 内容不能为空，请提供需要渲染的 Markdown 文本。"
@@ -2834,7 +2863,7 @@ body > * {{
                 content, tpl, user_id, False, effective_layout
             )
         except Exception as e:
-            logger.error(f"[HTML渲染] render_to_image 工具渲染失败: {e}")
+            logger.error(f"[HTML渲染] latex_render_to_image 工具渲染失败: {e}")
             yield self._format_render_failure(e)
             return
 
@@ -2878,6 +2907,25 @@ body > * {{
                 )
         else:
             yield "渲染失败：浏览器未生成图片。"
+
+    @filter.llm_tool(name="latex_render_template_guide")
+    async def latex_render_template_guide_tool(
+        self,
+        event: AstrMessageEvent,
+        template: str = "",
+    ):
+        """查询 LaTeX Render 插件当前实际可用的模板、会话当前模板及内容写作规范；只返回说明，不渲染或发送图片。
+
+        当用户询问样式、需要选择模板，或准备调用 latex_render_to_image 但不确定 template 时调用。
+
+        Args:
+            template(string): 可选。留空返回全部模板概览；填写模板名返回该模板的详细说明。
+        """
+        current_template = self._get_agent_current_template(event)
+        yield self._build_agent_template_guidance(
+            current_template=current_template,
+            template=template,
+        )
 
     # ==================== 隐藏上下文缓冲 ====================
 
@@ -2943,18 +2991,16 @@ body > * {{
     async def on_llm_req(self, event: AstrMessageEvent, req: ProviderRequest):
         inject_template_prompts = self.config.get("inject_template_prompts", False)
         if inject_template_prompts:
+            template_context = self._build_agent_template_guidance(
+                current_template=self._get_agent_current_template(event),
+                compact=True,
+            )
             req.extra_user_content_parts.append(
                 TextPart(
                     text=(
                         "<render_template_context>\n"
-                        "仅在调用 render_to_image 时参考：\n"
-                        "- classic：知识排版，适合推导、讲解、公式、表格和代码；"
-                        "使用标准 Markdown 与 LaTeX。\n"
-                        "- paper：纯白固定 A4，适合论文、报告和打印；"
-                        "使用标准 Markdown 与 LaTeX。\n"
-                        "- custom：用户在工作台保存的自定义模板；"
-                        "仅在用户明确要求时选用。\n"
-                        "用户未指定样式时省略 template，沿用其当前模板。\n"
+                        "仅在调用 latex_render_to_image 时参考：\n"
+                        f"{template_context}\n"
                         "</render_template_context>"
                     )
                 ).mark_as_temp()

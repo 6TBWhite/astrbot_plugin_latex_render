@@ -24,17 +24,17 @@
 
 ## 产品定位
 
-LaTeX Render 给 AstrBot 增加一个 `render_to_image` 工具：LLM 先写完整内容，插件再把 Markdown、LaTeX 和模板样式交给本地 Chromium，最后只把生成的图片发送到当前会话。
+LaTeX Render 给 AstrBot 增加 `latex_render_to_image` 与 `latex_render_template_guide` 两个工具：LLM 可按需查询模板，再把完整 Markdown、LaTeX 和模板样式交给本地 Chromium，最后只把生成的图片发送到当前会话。
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前发布版本为 `1.2.1`，要求 AstrBot `>=4.26.3`。
+当前发布版本为 `1.2.2`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
 | 功能          | 实现                                                                       | 边界                                 |
 | ----------- | ------------------------------------------------------------------------ | ---------------------------------- |
-| LLM 工具调用    | Agent 可调用 `render_to_image`，将完整内容渲染并发送为图片                                | 不拦截普通消息，不自动把所有回复转为图片               |
+| LLM 工具调用    | Agent 可调用 `latex_render_template_guide` 按需查询模板，再用 `latex_render_to_image` 渲染并发送图片 | 不拦截普通消息，不自动把所有回复转为图片               |
 | Markdown 排版 | 通过 Mistune 处理标题、列表、引用、代码块、删除线和表格                                         | 可在 WebUI 中关闭                       |
 | 代码语法高亮      | 显式标注语言的围栏代码块使用本地 Highlight.js 高亮，并按模板匹配主题                              | 不猜测未标注语言，不为行内代码或可信原始 HTML 注入高亮       |
 | LaTeX 公式    | 识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和 `\begin{...}` / `\end{...}` 块 | 具体语法支持范围由插件附带的 MathJax 决定          |
@@ -182,7 +182,7 @@ python -m pip install -r requirements.txt
 2. 发送 `/测试`，使用默认内容检查 Markdown、代码块和公式。
 3. 发送 `/查看` 查看模板，再用 `/切换 classic` 或 `/切换 novel` 设置偏好。
 4. 打开插件的 `studio` 页面，在“模板画廊”拖动滑条并生成一次真实预览。
-5. 在 Agent 对话中明确要求“把完整讲解渲染成图片”，检查 `render_to_image` 工具调用。
+5. 在 Agent 对话中明确要求“把完整讲解渲染成图片”，检查 `latex_render_to_image` 工具调用。
 
 首次启动需要下载数百 MB 的 Chromium headless shell，耗时取决于网络。下载完成后会复用插件数据目录中的浏览器文件。
 
@@ -223,17 +223,41 @@ python -m pip install -r requirements.txt
 | `background_image_strategy`         | `fixed`   | `fixed`、`round_robin` 或 `random`                        |
 | `background_render_mode`            | `ambient` | `ambient` 氛围背景或 `watermark` 水印                          |
 | `background_opacity`                | `0.22`    | 背景透明度                                                   |
-| `inject_template_prompts`           | `false`   | 向本轮 LLM 请求提供 classic、paper 与 custom 的精简模板说明             |
+| `inject_template_prompts`           | `false`   | 兼容模式：向每轮 LLM 请求注入动态模板概览；通常保持关闭并按需调用查询工具               |
 | `enable_hidden_ctx_buffer`          | `false`   | 临时注入最近三条已渲染原文；实验性功能                                     |
 
 ## 模板与命令
 
 ### LLM 工具
 
-`render_to_image` 接收完整 Markdown / LaTeX 内容：
+两个工具共享 `latex_render_` 命名空间，便于 Agent 在同时启用多个图片、网页或代码渲染插件时识别本插件。AstrBot 的同名工具会按加载顺序覆盖，因此 v1.2.2 不再注册通用旧名 `render_to_image`。
+
+| 工具                            | 何时使用                                      | 是否发送图片 |
+| ----------------------------- | ----------------------------------------- | ------ |
+| `latex_render_template_guide` | 查询当前模板、比较用途，或读取指定模板的 Markdown / 语义标签规范 | 否      |
+| `latex_render_to_image`       | 把完整 Markdown / LaTeX 排版为一张或多张图片并发送给当前用户  | 是      |
+
+> **v1.2.2 迁移提示：**旧 Persona、Agent 配置或工具白名单中的 `render_to_image` 必须替换为 `latex_render_to_image`。旧名不保留别名，避免再次与其他渲染插件冲突。
+
+#### 查询模板与写作规范
+
+`latex_render_template_guide` 用于在渲染前按需查询当前实际可用的模板：
 
 ```text
-render_to_image(
+latex_render_template_guide()                 # 全部模板概览与当前模板
+latex_render_template_guide(template="novel") # 指定模板的用途与内容规范
+```
+
+不传 `template` 时返回当前会话模板和紧凑目录；传入模板名时返回用途、标签、内置内容规范以及应交给渲染工具的参数值。目录直接读取当前实例的模板管理器，Custom 元数据变化后无需同步维护另一份 Agent 提示词。
+
+查询工具只返回文本说明，不启动 Chromium、不生成图片，也不会向用户额外发送消息。Custom 仅公开长度受限的名称、描述和标签，不返回 HTML、CSS 或模板源码。
+
+#### 渲染并发送图片
+
+`latex_render_to_image` 接收完整 Markdown / LaTeX 内容：
+
+```text
+latex_render_to_image(
   content="## 勾股定理\n设两直角边为 $a$、$b$，斜边为 $c$：\n$$a^2+b^2=c^2$$",
   template="classic",
   layout="auto"
@@ -243,8 +267,15 @@ render_to_image(
 | 参数         | 必填  | 说明                                                   |
 | ---------- | --- | ---------------------------------------------------- |
 | `content`  | 是   | 要渲染的完整内容，无需额外包含 `<render>` 标签                        |
-| `template` | 否   | `classic`、`novel`、`paper` 或其他已有模板名；留空使用用户默认          |
+| `template` | 否   | 通常留空以沿用当前模板；仅在用户明确指定或已经选定模板时填写                       |
 | `layout`   | 否   | `auto` 或 `single`；留空使用当前用户偏好。旧值 `paged` 仍按 `auto` 兼容 |
+
+Agent 选择工具时遵循以下边界：
+
+- 用户明确要求排版图片，或需要把公式推导、讲解、报告等内容以图片交付时，调用 `latex_render_to_image`。
+- 文生图、图片编辑和网页截图不属于本工具；应交给相应的图片或浏览器工具。
+- 用户未指定样式时让 `template` 留空；只有用户明确指定或已经选定模板时才填写。
+- Inline code 不高亮；只有显式标注语言的 Markdown 围栏代码块使用本地 Highlight.js。
 
 ### 用户命令
 
@@ -348,6 +379,7 @@ astrbot_plugin_latex_render/
 │   ├── models.py           结构化渲染结果与错误类型
 │   ├── renderer.py         Playwright、分页、A4 画布、体积预算与 GIF 原型
 │   ├── security.py         HTML 允许列表清洗
+│   ├── template_guidance.py Agent 模板目录、内容规范与受限元数据输出
 │   ├── text_processing.py  Markdown、LaTeX 保护与换行处理
 │   └── template_manager.py 内置/自定义模板发现、校验与原子持久化
 ├── assets/

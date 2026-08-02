@@ -32,7 +32,7 @@ def test_real_chromium_covers_user_command_and_agent_tool(
                 plugin.cmd_test_render(command_event)
             )
             agent_results = await collect_results(
-                plugin.render_to_image_tool(
+                plugin.latex_render_to_image_tool(
                     agent_event,
                     content=agent_content,
                     template="classic",

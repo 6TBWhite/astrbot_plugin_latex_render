@@ -348,7 +348,7 @@ def test_agent_tool_sends_all_rendered_pages(
 
     results = asyncio.run(
         collect_results(
-            plugin.render_to_image_tool(
+            plugin.latex_render_to_image_tool(
                 event,
                 content="\n\n".join(f"段落 {i}" for i in range(100)),
                 template="classic",
@@ -380,7 +380,7 @@ def test_agent_tool_reports_exact_failed_page(
 
     results = asyncio.run(
         collect_results(
-            plugin.render_to_image_tool(
+            plugin.latex_render_to_image_tool(
                 event,
                 content="多页内容",
                 template="classic",
