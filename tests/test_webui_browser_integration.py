@@ -116,6 +116,14 @@ $$
             "hint": "启用 Markdown 排版。",
         },
         {
+            "key": "enable_code_highlight",
+            "label": "代码高亮与语言标识",
+            "type": "boolean",
+            "default": True,
+            "value": True,
+            "hint": "高亮显式标注语言的代码块并显示语言名称。",
+        },
+        {
             "key": "show_page_numbers",
             "label": "多页显示页码",
             "type": "boolean",
@@ -307,6 +315,7 @@ async def _exercise_webui() -> None:
                 ".config-section-head h3"
             ).all_text_contents()
             assert section_titles == ["基础参数", "功能开关", "安全与网络"]
+            assert await page.get_by_text("代码高亮与语言标识", exact=True).is_visible()
             assert await page.locator(".config-help-button").count() == 0
             page_height_input = page.locator('[data-config-key="max_page_height"]')
             assert await page_height_input.is_visible()
@@ -375,7 +384,7 @@ async def _exercise_webui() -> None:
             assert (
                 await page.locator(".template-card")
                 .filter(has_text="Classic 知识卡")
-                .get_by_text("步骤推导", exact=True)
+                .get_by_text("讲题讲解", exact=True)
                 .is_visible()
             )
             assert (

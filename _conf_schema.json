@@ -36,6 +36,12 @@
         "default": true,
         "hint": "支持 $...$、$$...$$、\\(...\\)、\\[...\\] 以及部分 begin/end 环境"
     },
+    "enable_code_highlight": {
+        "type": "bool",
+        "description": "代码高亮与语言标识",
+        "default": true,
+        "hint": "对显式标注语言的 Markdown 围栏代码块启用本地语法高亮，并在右上角显示语言名称"
+    },
     "trusted_html_mode": {
         "type": "bool",
         "description": "可信 HTML/CSS 模式",

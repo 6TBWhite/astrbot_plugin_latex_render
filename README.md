@@ -28,7 +28,7 @@ LaTeX Render 给 AstrBot 增加 `latex_render_to_image` 与 `latex_render_templa
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前发布版本为 `1.2.2`，要求 AstrBot `>=4.26.3`。
+当前发布版本为 `1.2.3`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
@@ -36,7 +36,7 @@ LaTeX Render 给 AstrBot 增加 `latex_render_to_image` 与 `latex_render_templa
 | ----------- | ------------------------------------------------------------------------ | ---------------------------------- |
 | LLM 工具调用    | Agent 可调用 `latex_render_template_guide` 按需查询模板，再用 `latex_render_to_image` 渲染并发送图片 | 不拦截普通消息，不自动把所有回复转为图片               |
 | Markdown 排版 | 通过 Mistune 处理标题、列表、引用、代码块、删除线和表格                                         | 可在 WebUI 中关闭                       |
-| 代码语法高亮      | 显式标注语言的围栏代码块使用本地 Highlight.js 高亮，并按模板匹配主题                              | 不猜测未标注语言，不为行内代码或可信原始 HTML 注入高亮       |
+| 代码高亮与语言标识   | 显式标注语言的围栏代码块使用本地 Highlight.js 高亮、显示右上角语言名称，并按模板匹配主题                  | 可整体关闭；未知语言仅显示声明，不自动猜测，不处理行内代码或可信原始 HTML |
 | LaTeX 公式    | 识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和 `\begin{...}` / `\end{...}` 块 | 具体语法支持范围由插件附带的 MathJax 决定          |
 | 智能分页        | 超过页高预算后按顶层语义块装箱到固定高度页面，每张图片尺寸一致                                  | 公式、表格和代码块优先整体换页；极端超高单块会带续页标记       |
 | 内置模板        | 仓库提供 `classic`、`novel` 和固定 A4 `paper`                                    | `templates/` 中至少需要一个可用模板           |
@@ -198,6 +198,7 @@ python -m pip install -r requirements.txt
 | `default_layout`                    | `auto`    | `auto` 超长时分页、`single` 单张长图；固定 A4 由 `paper` 决定           |
 | `enable_markdown`                   | `true`    | 启用 Markdown 解析                                          |
 | `enable_math`                       | `true`    | 启用 LaTeX / MathJax 渲染                                   |
+| `enable_code_highlight`             | `true`    | 启用显式语言代码块的语法高亮与右上角语言标识                                |
 | `trusted_html_mode`                 | `false`   | 私人部署才开启的原始 HTML/CSS 模式                                  |
 | `allow_remote_assets`               | `false`   | 仅可信模式生效；允许 Chromium 请求远程资源                              |
 | `max_input_chars`                   | `50000`   | 单次最大输入字符数                                               |

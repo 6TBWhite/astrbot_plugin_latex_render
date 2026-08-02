@@ -361,6 +361,8 @@ def test_webui_bootstrap_reports_runtime_contract(
     assert fields["max_page_height"]["value"] == 3200
     assert fields["max_page_height"]["min"] == 1200
     assert fields["max_page_height"]["max"] == 6000
+    assert fields["enable_code_highlight"]["value"] is True
+    assert fields["enable_code_highlight"]["label"] == "代码高亮与语言标识"
     assert fields["trusted_html_mode"]["danger"] is True
     assert result["status"]["browser_connected"] is True
     assert result["status"]["cjk_font_available"] is True
@@ -410,6 +412,7 @@ def test_webui_config_save_validates_and_persists(plugin, plugin_main, monkeypat
                     "render_scale": 3,
                     "max_page_height": 3600,
                     "enable_math": False,
+                    "enable_code_highlight": False,
                 }
             }
         ),
@@ -422,7 +425,22 @@ def test_webui_config_save_validates_and_persists(plugin, plugin_main, monkeypat
     assert plugin.config["render_scale"] == 3
     assert plugin.config["max_page_height"] == 3600
     assert plugin.config["enable_math"] is False
+    assert plugin.config["enable_code_highlight"] is False
     assert saved == [True]
+
+
+def test_webui_config_reset_enables_code_highlight_by_default(
+    plugin, plugin_main, monkeypatch
+) -> None:
+    plugin.config["enable_code_highlight"] = False
+    monkeypatch.setattr(plugin_main, "json_response", lambda payload: payload)
+    monkeypatch.setattr(plugin_main, "request", FakeRequest({}))
+
+    result = asyncio.run(plugin._api_page_reset_config())
+
+    assert result["ok"] is True
+    assert result["saved"]["enable_code_highlight"] is True
+    assert plugin.config["enable_code_highlight"] is True
 
 
 def test_webui_custom_save_is_persistent_and_rejects_active_content(

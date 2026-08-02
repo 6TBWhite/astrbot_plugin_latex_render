@@ -199,6 +199,8 @@ plain unlabelled code
     async def inspect_templates():
         states = {}
         novel_result = None
+        disabled_state = None
+        disabled_result = None
         try:
             await plugin_main.init_browser()
             browser = await renderer._get_browser()
@@ -239,11 +241,53 @@ plain unlabelled code
             novel_result = await plugin._render_content(
                 source, "novel", "user-1", False
             )
-            return states, novel_result
+
+            plugin.config["enable_code_highlight"] = False
+            _, _, disabled_html, _ = plugin._prepare_render_document(
+                source, "classic", "user-1", None, None
+            )
+            context = await browser.new_context(viewport={"width": 794, "height": 800})
+            page = await context.new_page()
+            try:
+                await renderer._install_network_policy(page)
+                await page.set_content(disabled_html, wait_until="domcontentloaded")
+                await renderer._prepare_page_for_capture(page, 794)
+                disabled_state = await page.evaluate(
+                    """() => ({
+                        readyDefined: Object.prototype.hasOwnProperty.call(
+                            window, '__ASTR_CODE_HIGHLIGHT_READY__'
+                        ),
+                        theme: document.querySelector(
+                            '#astrbot-code-highlight-theme'
+                        )?.dataset.theme || '',
+                        blocks: Array.from(document.querySelectorAll('pre > code')).map(
+                            block => ({
+                                text: block.textContent,
+                                language: Array.from(block.classList).find(
+                                    name => name.startsWith('language-')
+                                ) || '',
+                                highlighted: block.classList.contains('hljs'),
+                                tokens: block.querySelectorAll('[class^="hljs-"]').length,
+                                label: block.parentElement.querySelector(
+                                    ':scope > .astr-code-language'
+                                )?.textContent || ''
+                            })
+                        )
+                    })"""
+                )
+            finally:
+                await context.close()
+
+            disabled_result = await plugin._render_content(
+                source, "classic", "user-1", False
+            )
+            return states, novel_result, disabled_state, disabled_result
         finally:
             await plugin_main.close_browser()
 
-    states, novel_result = asyncio.run(inspect_templates())
+    states, novel_result, disabled_state, disabled_result = asyncio.run(
+        inspect_templates()
+    )
 
     expected_themes = {
         "classic": "github-dark",
@@ -273,5 +317,26 @@ plain unlabelled code
     assert novel_result.template == "novel"
     assert novel_result.images
     with PILImage.open(novel_result.images[0].path) as rendered:
+        assert rendered.format == "JPEG"
+        assert rendered.width == 1200
+
+    assert disabled_state["readyDefined"] is False
+    assert disabled_state["theme"] == ""
+    assert [block["language"] for block in disabled_state["blocks"]] == [
+        "language-python",
+        "language-js",
+        "language-json",
+        "language-sh",
+        "language-c++",
+        "language-mysterylang",
+        "",
+    ]
+    assert all(not block["highlighted"] for block in disabled_state["blocks"])
+    assert all(block["tokens"] == 0 for block in disabled_state["blocks"])
+    assert all(block["label"] == "" for block in disabled_state["blocks"])
+    assert "plain unknown language" in disabled_state["blocks"][5]["text"]
+    assert disabled_result.template == "classic"
+    assert disabled_result.images
+    with PILImage.open(disabled_result.images[0].path) as rendered:
         assert rendered.format == "JPEG"
         assert rendered.width == 1200

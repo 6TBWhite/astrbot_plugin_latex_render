@@ -39,6 +39,7 @@ def plugin(plugin_main, tmp_path):
         "default_template": "",
         "enable_markdown": True,
         "enable_math": True,
+        "enable_code_highlight": True,
         "enable_hidden_ctx_buffer": False,
         "inject_template_prompts": False,
         "render_width": 600,

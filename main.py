@@ -477,6 +477,12 @@ class LatexRenderPlugin(Star):
             "default": True,
             "hint": "启用离线 MathJax，渲染行内公式、块公式和常见 LaTeX 环境。",
         },
+        "enable_code_highlight": {
+            "label": "代码高亮与语言标识",
+            "type": "boolean",
+            "default": True,
+            "hint": "高亮显式标注语言的 Markdown 围栏代码块，并在右上角显示语言名称。",
+        },
         "show_page_numbers": {
             "label": "多页显示页码",
             "type": "boolean",
@@ -1405,6 +1411,8 @@ window.MathJax = {
     def _inject_code_highlight_assets(self, html_content: str, scene: str) -> str:
         """Highlight explicitly labelled fenced code without language guessing."""
 
+        if not self.config.get("enable_code_highlight", True):
+            return html_content
         if (
             "data-astrbot-code-highlight-loader" in html_content
             or not re.search(
