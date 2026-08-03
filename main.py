@@ -1146,17 +1146,31 @@ class LatexRenderPlugin(Star):
             raise RuntimeError(f"HTML 渲染插件初始化失败: {e}") from e
 
     async def _ensure_playwright(self):
-        browsers_dir = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
-        if browsers_dir and os.path.isdir(browsers_dir):
-            has_headless = any(
-                name.lower().startswith("chromium_headless_shell")
-                for name in os.listdir(browsers_dir)
+        headless_shell_dir = None
+        try:
+            headless_shell_dir = self._get_playwright_headless_shell_dir()
+        except Exception as e:
+            logger.warning(f"HTML渲染插件: 无法检查 Playwright 浏览器版本，将重新安装: {e}")
+
+        executable_names = {"chrome-headless-shell", "chrome-headless-shell.exe"}
+        has_headless_shell = bool(
+            headless_shell_dir
+            and headless_shell_dir.is_dir()
+            and any(
+                path.is_file() and path.name in executable_names
+                for path in headless_shell_dir.rglob("*")
             )
-            if has_headless:
-                logger.info(
-                    "HTML渲染插件: Playwright Chromium headless shell 已存在，跳过安装"
-                )
-                return
+        )
+        if has_headless_shell:
+            logger.info(
+                "HTML渲染插件: Playwright Chromium headless shell 已存在，跳过安装"
+            )
+            return
+
+        if headless_shell_dir:
+            logger.info(
+                f"HTML渲染插件: 当前 Playwright 所需浏览器不存在，将安装: {headless_shell_dir}"
+            )
 
         logger.info("HTML渲染插件: 检查 Playwright 依赖...")
         try:
@@ -1180,6 +1194,26 @@ class LatexRenderPlugin(Star):
                 "无法安装 Playwright Chromium headless shell；"
                 "请按 README 的“手动安装项”处理后重载插件"
             ) from e
+
+    @staticmethod
+    def _get_playwright_headless_shell_dir() -> Path:
+        import playwright
+
+        manifest_path = (
+            Path(playwright.__file__).resolve().parent
+            / "driver"
+            / "package"
+            / "browsers.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        browser = next(
+            item
+            for item in manifest.get("browsers", [])
+            if item.get("name") == "chromium-headless-shell"
+        )
+        revision = str(browser["revision"])
+        browsers_dir = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
+        return browsers_dir / f"chromium_headless_shell-{revision}"
 
     async def terminate(self):
         self._save_preferences()
