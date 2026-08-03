@@ -1,4 +1,7 @@
-from core.text_processing import contains_math, markdown_to_html
+from astrbot_plugin_latex_render_under_test.rendering.text import (
+    contains_math,
+    markdown_to_html,
+)
 
 
 def test_math_detection_ignores_code_and_finds_formulae() -> None:
@@ -31,9 +34,7 @@ def test_advertised_markdown_constructs_are_rendered() -> None:
 
 
 def test_fenced_code_preserves_safe_language_and_escapes_html() -> None:
-    rendered = markdown_to_html(
-        "```c++\n<script>window.pwned = true</script>\n```"
-    )
+    rendered = markdown_to_html("```c++\n<script>window.pwned = true</script>\n```")
 
     assert '<code class="language-c++">' in rendered
     assert "<script>" not in rendered

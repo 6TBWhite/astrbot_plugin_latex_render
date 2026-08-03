@@ -10,7 +10,7 @@ import uuid
 from astrbot.api import logger
 from astrbot.api.message_components import Image
 
-from .config import RenderConfig, normalize_layout
+from ..config import RenderConfig, normalize_layout
 from .document import HtmlDocumentBuilder
 from .models import (
     BrowserRenderResult,

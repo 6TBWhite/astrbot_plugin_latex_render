@@ -3,6 +3,7 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,14 +28,18 @@ def _load_plugin_package():
     return importlib.import_module(f"{PACKAGE_NAME}.main")
 
 
+PLUGIN_MAIN = _load_plugin_package()
+
+
 @pytest.fixture(scope="session")
 def plugin_main():
-    return _load_plugin_package()
+    return PLUGIN_MAIN
 
 
 @pytest.fixture()
 def plugin(plugin_main, tmp_path):
     instance = object.__new__(plugin_main.LatexRenderPlugin)
+    instance.context = SimpleNamespace()
     instance.config = {
         "default_template": "",
         "enable_markdown": True,
@@ -48,25 +53,9 @@ def plugin(plugin_main, tmp_path):
     instance.DATA_DIR = str(tmp_path)
     instance.IMAGE_CACHE_DIR = str(tmp_path / "latex_cache")
     Path(instance.IMAGE_CACHE_DIR).mkdir()
-    instance.template_mgr = plugin_main.TemplateManager(str(PLUGIN_ROOT / "templates"))
+    instance._compose_services()
     instance.template_mgr.update_template_id_map()
-    instance.user_default_template = {}
-    instance.user_preferences = {}
-    instance.PREFERENCES_PATH = str(tmp_path / "preferences.json")
-    instance._hidden_ctx_buffer = {}
-    instance._bg_asset_cache = {}
-    instance._bg_image_size = None
-    instance._bg_round_robin_index = 0
-    instance.gif_duration = 3.0
-    instance.gif_fps = 15
-    instance._active_renders = 0
-    instance._queued_renders = 0
-    instance._render_semaphore_state = None
-    instance._last_render_metrics = {}
-    instance._last_render_error = {}
-    instance._browser_failure_count = 0
-    instance._browser_cooldown_until = 0.0
-    instance._schedule_delete = lambda *paths: None
+    instance.pipeline.schedule_delete = lambda *paths: None
     return instance
 
 

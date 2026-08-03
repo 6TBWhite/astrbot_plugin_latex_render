@@ -4,11 +4,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.security import sanitize_html_fragment
+from astrbot_plugin_latex_render_under_test.rendering.security import (
+    sanitize_html_fragment,
+)
+from astrbot_plugin_latex_render_under_test.rendering.models import (
+    RenderFailure,
+    RenderResult,
+)
+from astrbot_plugin_latex_render_under_test.rendering.text import markdown_to_html
 
 
-def test_safe_markdown_removes_executable_html_and_keeps_semantics(plugin_main):
-    rendered = plugin_main.markdown_to_html(
+def test_safe_markdown_removes_executable_html_and_keeps_semantics():
+    rendered = markdown_to_html(
         """
 # 安全测试
 <script>window.pwned = true</script>
@@ -54,8 +61,8 @@ def test_safe_html_rejects_invalid_or_oversized_code_language_classes() -> None:
 def test_input_budget_is_rejected_before_browser_work(plugin, plugin_main):
     plugin.config["max_input_chars"] = 100
 
-    with pytest.raises(plugin_main.RenderFailure) as caught:
-        asyncio.run(plugin._render_content("x" * 101, "classic", "user-1", False))
+    with pytest.raises(RenderFailure) as caught:
+        asyncio.run(plugin.pipeline.render("x" * 101, "classic", "user-1", False))
 
     assert caught.value.code == "resource_limit"
 
@@ -69,17 +76,17 @@ def test_full_queue_is_rejected_deterministically(plugin, plugin_main):
     async def slow_inner(*args, **kwargs):
         entered.set()
         await release.wait()
-        return plugin_main.RenderResult(images=[object()], template="classic")
+        return RenderResult(images=[object()], template="classic")
 
-    plugin._render_content_inner = slow_inner
+    plugin.pipeline._render_inner = slow_inner
 
     async def scenario():
         first = asyncio.create_task(
-            plugin._render_content("first", "classic", "user-1", False)
+            plugin.pipeline.render("first", "classic", "user-1", False)
         )
         await entered.wait()
-        with pytest.raises(plugin_main.RenderFailure) as caught:
-            await plugin._render_content("second", "classic", "user-2", False)
+        with pytest.raises(RenderFailure) as caught:
+            await plugin.pipeline.render("second", "classic", "user-2", False)
         assert caught.value.code == "queue_full"
         release.set()
         await first
@@ -88,7 +95,7 @@ def test_full_queue_is_rejected_deterministically(plugin, plugin_main):
 
 
 def test_network_policy_blocks_remote_and_file_urls(plugin_main):
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
 
     class FakePage:
         def __init__(self):

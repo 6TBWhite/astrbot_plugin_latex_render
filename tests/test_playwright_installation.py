@@ -1,3 +1,4 @@
+import importlib
 from pathlib import Path
 
 import pytest
@@ -22,10 +23,17 @@ async def test_ensure_playwright_skips_install_for_expected_executable(
     async def unexpected_install(*args, **kwargs):
         raise AssertionError("不应重复安装已存在的当前版本浏览器")
 
-    monkeypatch.setattr(plugin, "_get_playwright_headless_shell_dir", lambda: browser_dir)
-    monkeypatch.setattr(plugin_main.asyncio, "create_subprocess_exec", unexpected_install)
+    runtime_module = importlib.import_module(
+        f"{plugin_main.__package__}.rendering.browser_runtime"
+    )
+    monkeypatch.setattr(
+        plugin.browser, "expected_headless_shell_dir", lambda: browser_dir
+    )
+    monkeypatch.setattr(
+        runtime_module.asyncio, "create_subprocess_exec", unexpected_install
+    )
 
-    await plugin._ensure_playwright()
+    await plugin.browser.ensure_installed()
 
 
 @pytest.mark.asyncio
@@ -49,12 +57,15 @@ async def test_ensure_playwright_installs_when_only_stale_revision_exists(
         return FakeInstallProcess()
 
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(browsers_dir))
-    monkeypatch.setattr(
-        plugin, "_get_playwright_headless_shell_dir", lambda: expected_browser_dir
+    runtime_module = importlib.import_module(
+        f"{plugin_main.__package__}.rendering.browser_runtime"
     )
-    monkeypatch.setattr(plugin_main.asyncio, "create_subprocess_exec", install)
+    monkeypatch.setattr(
+        plugin.browser, "expected_headless_shell_dir", lambda: expected_browser_dir
+    )
+    monkeypatch.setattr(runtime_module.asyncio, "create_subprocess_exec", install)
 
-    await plugin._ensure_playwright()
+    await plugin.browser.ensure_installed()
 
     assert len(calls) == 1
     assert calls[0][1:] == (

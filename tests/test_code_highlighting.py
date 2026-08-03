@@ -30,7 +30,7 @@ def _document(code_class: str = "language-python") -> str:
 def test_code_highlight_injection_selects_scene_theme(
     plugin, scene: str, theme: str
 ) -> None:
-    rendered = plugin._inject_code_highlight_assets(_document(), scene)
+    rendered = plugin.assets.inject_code_highlight(_document(), scene)
 
     assert f'data-theme="{theme}"' in rendered
     assert "data-astrbot-code-highlight-loader" in rendered
@@ -41,16 +41,16 @@ def test_code_highlight_injection_selects_scene_theme(
 
 
 def test_code_highlight_injection_is_idempotent(plugin) -> None:
-    rendered = plugin._inject_code_highlight_assets(_document(), "knowledge")
+    rendered = plugin.assets.inject_code_highlight(_document(), "knowledge")
 
-    assert plugin._inject_code_highlight_assets(rendered, "knowledge") == rendered
+    assert plugin.assets.inject_code_highlight(rendered, "knowledge") == rendered
     assert rendered.count("data-astrbot-code-highlight-loader") == 1
 
 
 def test_code_highlight_defaults_to_enabled_for_legacy_config(plugin) -> None:
     plugin.config.pop("enable_code_highlight")
 
-    rendered = plugin._inject_code_highlight_assets(_document(), "knowledge")
+    rendered = plugin.assets.inject_code_highlight(_document(), "knowledge")
 
     assert "data-astrbot-code-highlight-loader" in rendered
 
@@ -60,13 +60,13 @@ def test_code_highlight_switch_disables_assets_and_language_label(
 ) -> None:
     plugin.config["enable_code_highlight"] = False
     monkeypatch.setattr(
-        plugin,
-        "_load_code_highlight_assets",
+        plugin.assets,
+        "load_code_highlight",
         lambda _theme: pytest.fail("关闭高亮时不应读取高亮资源"),
     )
     source = _document()
 
-    rendered = plugin._inject_code_highlight_assets(source, "knowledge")
+    rendered = plugin.assets.inject_code_highlight(source, "knowledge")
 
     assert rendered == source
     assert 'class="language-python"' in rendered
@@ -88,7 +88,7 @@ def test_code_highlight_config_schema_defaults_to_enabled() -> None:
 def test_unlabelled_code_does_not_load_highlighter(plugin) -> None:
     source = _document("")
 
-    assert plugin._inject_code_highlight_assets(source, "knowledge") == source
+    assert plugin.assets.inject_code_highlight(source, "knowledge") == source
 
 
 def test_trusted_raw_html_does_not_load_highlighter(plugin) -> None:
@@ -98,7 +98,7 @@ def test_trusted_raw_html_does_not_load_highlighter(plugin) -> None:
         '<pre><code class="language-python">print(1)</code></pre>'
     )
 
-    _, _, rendered, trusted_mode = plugin._prepare_render_document(
+    _, _, rendered, trusted_mode = plugin.documents.build(
         source, "classic", "user-1", None, None
     )
 
@@ -107,16 +107,16 @@ def test_trusted_raw_html_does_not_load_highlighter(plugin) -> None:
 
 
 def test_missing_highlight_assets_fall_back_to_plain_code(plugin, monkeypatch) -> None:
-    monkeypatch.setattr(plugin, "_load_code_highlight_assets", lambda _theme: None)
+    monkeypatch.setattr(plugin.assets, "load_code_highlight", lambda _theme: None)
     source = _document()
 
-    assert plugin._inject_code_highlight_assets(source, "knowledge") == source
+    assert plugin.assets.inject_code_highlight(source, "knowledge") == source
 
 
 def test_disabled_highlight_keeps_markdown_fenced_code(plugin) -> None:
     plugin.config["enable_code_highlight"] = False
 
-    _, _, rendered, trusted_mode = plugin._prepare_render_document(
+    _, _, rendered, trusted_mode = plugin.documents.build(
         '```python\nprint("hello")\n```',
         "classic",
         "user-1",

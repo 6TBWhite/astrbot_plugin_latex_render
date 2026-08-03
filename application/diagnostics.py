@@ -13,10 +13,10 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.message_components import Image, Plain
 
-from .pipeline import RenderPipeline
-from .renderer import get_renderer_status
-from .template_manager import TemplateManager
-from .templates import TemplateService
+from ..rendering.pipeline import RenderPipeline
+from ..rendering.renderer import get_renderer_status
+from ..template_system.manager import TemplateManager
+from ..template_system.service import TemplateService
 
 
 class DiagnosticsService:

@@ -7,7 +7,7 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
-from .config import RenderConfig
+from ..config import RenderConfig
 
 
 class HiddenContextBuffer:

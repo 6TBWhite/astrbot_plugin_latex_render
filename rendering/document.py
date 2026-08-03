@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import re
 
-from .config import RenderConfig
-from .document_assets import HtmlAssets
+from ..config import RenderConfig
+from ..template_system.service import TemplateService
+from .assets import HtmlAssets
 from .models import RenderFailure
-from .templates import TemplateService
-from .text_processing import contains_math
+from .text import contains_math
 
 
 class HtmlDocumentBuilder:

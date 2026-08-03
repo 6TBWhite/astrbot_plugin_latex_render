@@ -3,13 +3,20 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from core.actions import RenderActions
-from core.config import RenderConfig
-from core.diagnostics import DiagnosticsService
-from core.hidden_context import HiddenContextBuffer
-from core.models import RenderResult, RenderRuntimeSnapshot
-from core.preferences import PreferenceStore
-from core.webui import WebUIController
+from astrbot_plugin_latex_render_under_test.application.actions import RenderActions
+from astrbot_plugin_latex_render_under_test.application.diagnostics import (
+    DiagnosticsService,
+)
+from astrbot_plugin_latex_render_under_test.application.hidden_context import (
+    HiddenContextBuffer,
+)
+from astrbot_plugin_latex_render_under_test.application.webui import WebUIController
+from astrbot_plugin_latex_render_under_test.config import RenderConfig
+from astrbot_plugin_latex_render_under_test.preferences import PreferenceStore
+from astrbot_plugin_latex_render_under_test.rendering.models import (
+    RenderResult,
+    RenderRuntimeSnapshot,
+)
 
 
 class Event:
@@ -92,7 +99,7 @@ def test_diagnostics_payload_and_text_never_expose_absolute_paths(
     templates = SimpleNamespace(available=lambda: ["classic"], manager=manager)
     service = DiagnosticsService(pipeline, templates, str(plugin_dir), str(cache_dir))
     monkeypatch.setattr(
-        "core.diagnostics.get_renderer_status",
+        "astrbot_plugin_latex_render_under_test.application.diagnostics.get_renderer_status",
         lambda: {"browser_connected": False, "browser_launching": False},
     )
     monkeypatch.setattr(service, "has_probable_cjk_font", lambda: True)
@@ -107,14 +114,16 @@ def test_diagnostics_payload_and_text_never_expose_absolute_paths(
 
 def test_webui_controller_registers_all_legacy_routes() -> None:
     context = SimpleNamespace(register_web_api=Mock())
+    actions = SimpleNamespace(
+        config=None,
+        preferences=None,
+        templates=None,
+        pipeline=None,
+        diagnostics=None,
+    )
     controller = WebUIController(
         context,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        actions,
         "astrbot_plugin_latex_render",
         "1.0.0",
     )

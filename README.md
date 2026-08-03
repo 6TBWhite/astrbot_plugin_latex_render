@@ -375,20 +375,33 @@ AstrBot 更新后通常无需删除浏览器目录。该目录位于 `data/plugi
 
 ```text
 astrbot_plugin_latex_render/
-├── main.py                 AstrBot 入口、生命周期、命令与 LLM 工具
-├── core/
-│   ├── models.py           结构化渲染结果与错误类型
+├── main.py                 AstrBot 组合根、生命周期与装饰器薄适配层
+├── config.py               类型化配置读取、限幅与 WebUI 配置规格
+├── preferences.py          会话渲染偏好的原子持久化
+├── application/
+│   ├── actions.py          聊天命令、LLM 工具与事件钩子业务
+│   ├── diagnostics.py      安全状态、字体检测与 GIF 探针
+│   ├── hidden_context.py   按会话隔离的临时上下文缓冲
+│   └── webui.py            渲染工作台后端控制器
+├── rendering/
+│   ├── pipeline.py         队列、超时、重试、冷却与结果规范化
+│   ├── document.py         浏览器文档组装
+│   ├── assets.py           MathJax、Highlight.js 与背景资源
+│   ├── browser_runtime.py  Playwright 依赖检测与生命周期
 │   ├── renderer.py         Playwright、分页、A4 画布、体积预算与 GIF 原型
+│   ├── models.py           结构化渲染结果与错误类型
 │   ├── security.py         HTML 允许列表清洗
-│   ├── template_guidance.py Agent 模板目录、内容规范与受限元数据输出
-│   ├── text_processing.py  Markdown、LaTeX 保护与换行处理
-│   └── template_manager.py 内置/自定义模板发现、校验与原子持久化
+│   └── text.py             Markdown、LaTeX 保护与换行处理
+├── template_system/
+│   ├── manager.py          内置/自定义模板发现、校验与原子持久化
+│   ├── guidance.py         Agent 模板目录、内容规范与受限元数据输出
+│   └── service.py          模板选择、样式注入与指南协调
+├── templates/              纯模板资产目录，不包含 Python 模块
+│   ├── manifest.json       模板展示、主题、变量和固定纸张元数据
+│   └── classic / novel / paper
 ├── assets/
 │   ├── backgrounds/        管理员批准的背景素材
 │   └── mathjax-tex-svg.js  离线 MathJax
-├── templates/
-│   ├── manifest.json       模板展示、主题、变量和固定纸张元数据
-│   └── classic / novel / paper
 ├── pages/studio/index.html 独立渲染工作台
 ├── _conf_schema.json       AstrBot 配置页定义
 ├── metadata.yaml           插件市场元数据

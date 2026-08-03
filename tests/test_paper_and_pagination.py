@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 from PIL import Image as PILImage, ImageChops, ImageStat
 
+from astrbot_plugin_latex_render_under_test.rendering.models import RenderResult
+
 
 def test_semantic_pagination_keeps_short_lead_in_with_formula(plugin_main):
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     blocks = [
         {
             "top": 0,
@@ -80,7 +82,7 @@ def test_semantic_pagination_keeps_short_lead_in_with_formula(plugin_main):
 
 
 def test_pack_into_pages_fills_fixed_height_pages(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     groups = [
         {"top": 0, "bottom": 1000, "breakable": True, "block_indexes": [0]},
         {"top": 1040, "bottom": 2100, "breakable": True, "block_indexes": [1]},
@@ -94,7 +96,7 @@ def test_pack_into_pages_fills_fixed_height_pages(plugin_main) -> None:
 
 
 def test_pack_into_pages_marks_oversized_group_as_hard(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     groups = [
         {"top": 0, "bottom": 3000, "breakable": True, "block_indexes": [0]},
         {"top": 3040, "bottom": 7000, "breakable": True, "block_indexes": [1]},
@@ -106,7 +108,7 @@ def test_pack_into_pages_marks_oversized_group_as_hard(plugin_main) -> None:
 
 
 def test_pack_into_pages_raises_when_exceeding_max_pages(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     groups = [
         {
             "top": i * 4000,
@@ -125,7 +127,7 @@ def test_pack_into_pages_raises_when_exceeding_max_pages(plugin_main) -> None:
 
 
 def test_static_layout_uses_fixed_page_content_height(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     options = renderer.RenderOptions(
         html_content="<p>content</p>",
         output_image_path="render.jpg",
@@ -144,7 +146,7 @@ def test_static_layout_uses_fixed_page_content_height(plugin_main) -> None:
 
 
 def test_static_single_layout_rejects_absolute_height_overflow(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     options = renderer.RenderOptions(
         html_content="<p>content</p>",
         output_image_path="render.jpg",
@@ -158,7 +160,7 @@ def test_static_single_layout_rejects_absolute_height_overflow(plugin_main) -> N
 
 
 def test_page_output_path_preserves_legacy_second_page_name(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
 
     assert renderer._page_output_path("render.jpg", 0) == "render_p0.jpg"
     assert renderer._page_output_path("render.jpg", 1) == "render.jpg"
@@ -166,7 +168,7 @@ def test_page_output_path_preserves_legacy_second_page_name(plugin_main) -> None
 
 
 def test_page_number_font_size_tracks_render_scale(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
 
     assert renderer._page_number_font_size(0) == 14
     assert renderer._page_number_font_size(1) == 14
@@ -177,7 +179,7 @@ def test_page_number_font_size_tracks_render_scale(plugin_main) -> None:
 def test_page_number_position_is_centered_with_scaled_bottom_margin(
     plugin_main,
 ) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     text_bbox = (0, 4, 100, 24)
 
     x, y = renderer._page_number_position(
@@ -192,14 +194,12 @@ def test_page_number_position_is_centered_with_scaled_bottom_margin(
 
     assert (actual_box[0] + actual_box[2]) // 2 == 600
     assert 6400 - actual_box[3] == 48
-    _, default_y = renderer._page_number_position(
-        (1200, 6400), text_bbox, scale=2
-    )
+    _, default_y = renderer._page_number_position((1200, 6400), text_bbox, scale=2)
     assert 6400 - (default_y + text_bbox[3]) == 40
 
 
 def test_page_number_color_adapts_to_footer_luminance(plugin_main) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     text_box = (100, 80, 200, 110)
     light_page = PILImage.new("RGB", (300, 140), (245, 245, 240))
     dark_page = PILImage.new("RGB", (300, 140), (38, 48, 43))
@@ -221,7 +221,7 @@ def test_page_number_color_adapts_to_footer_luminance(plugin_main) -> None:
 def test_page_number_skips_single_page_without_touching_file(
     plugin_main, tmp_path
 ) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     path = tmp_path / "single.jpg"
     PILImage.new("RGB", (600, 400), (240, 235, 224)).save(
         path, "JPEG", quality=90, optimize=True
@@ -236,7 +236,7 @@ def test_page_number_skips_single_page_without_touching_file(
 def test_page_number_preserves_canvas_and_only_changes_footer(
     plugin_main, tmp_path
 ) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     path = tmp_path / "paged.jpg"
     PILImage.new("RGB", (600, 400), (240, 235, 224)).save(
         path, "JPEG", quality=90, optimize=True
@@ -262,16 +262,14 @@ def test_page_number_preserves_canvas_and_only_changes_footer(
 def test_animation_detection_stops_after_css_strategy_decides(
     plugin_main, monkeypatch
 ) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     css_clip = {"x": 10, "y": 20, "width": 300, "height": 200}
     css_detector = AsyncMock(return_value=(True, css_clip))
     pixel_detector = AsyncMock()
     monkeypatch.setattr(renderer, "_detect_css_animated_region", css_detector)
     monkeypatch.setattr(renderer, "_detect_pixel_animated_region", pixel_detector)
 
-    result = asyncio.run(
-        renderer._detect_animated_region(object(), 2, 600, 800)
-    )
+    result = asyncio.run(renderer._detect_animated_region(object(), 2, 600, 800))
 
     assert result == css_clip
     pixel_detector.assert_not_awaited()
@@ -280,7 +278,7 @@ def test_animation_detection_stops_after_css_strategy_decides(
 def test_animation_detection_falls_back_to_pixel_strategy(
     plugin_main, monkeypatch
 ) -> None:
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     pixel_clip = {"x": 5, "y": 6, "width": 100, "height": 80}
     monkeypatch.setattr(
         renderer,
@@ -290,9 +288,7 @@ def test_animation_detection_falls_back_to_pixel_strategy(
     pixel_detector = AsyncMock(return_value=pixel_clip)
     monkeypatch.setattr(renderer, "_detect_pixel_animated_region", pixel_detector)
 
-    result = asyncio.run(
-        renderer._detect_animated_region(object(), 2, 600, 800)
-    )
+    result = asyncio.run(renderer._detect_animated_region(object(), 2, 600, 800))
 
     assert result == pixel_clip
     pixel_detector.assert_awaited_once()
@@ -306,12 +302,17 @@ def test_paper_template_requests_fixed_a4_canvas(plugin, plugin_main, monkeypatc
         Path(options.output_image_path).write_bytes(b"paper-image")
         return True
 
+    pipeline_module = importlib.import_module(
+        f"{plugin_main.__package__}.rendering.pipeline"
+    )
     monkeypatch.setattr(
-        plugin_main, "html_to_image_playwright", AsyncMock(side_effect=fake_renderer)
+        pipeline_module,
+        "html_to_image_playwright",
+        AsyncMock(side_effect=fake_renderer),
     )
 
     result = asyncio.run(
-        plugin._render_content(
+        plugin.pipeline.render(
             "# 课程论文\n\n正文段落。\n\n$$E=mc^2$$",
             "paper",
             "user-1",
@@ -337,8 +338,8 @@ def test_agent_tool_sends_all_rendered_pages(
     plugin, plugin_main, fake_event_type, collect_results
 ):
     pages = [object(), object(), object()]
-    plugin._render_content = AsyncMock(
-        return_value=plugin_main.RenderResult(
+    plugin.pipeline.render_for_layout = AsyncMock(
+        return_value=RenderResult(
             images=pages,
             template="classic",
             metrics={"page_count": 3},
@@ -359,11 +360,12 @@ def test_agent_tool_sends_all_rendered_pages(
 
     assert [sent.payload[0] for sent in event.sent] == pages
     assert "3 页" in results[0]
-    plugin._render_content.assert_awaited_once_with(
+    plugin.pipeline.render_for_layout.assert_awaited_once_with(
         "\n\n".join(f"段落 {i}" for i in range(100)),
         "classic",
         "user-1",
         False,
+        "auto",
     )
 
 
@@ -372,8 +374,8 @@ def test_agent_tool_reports_exact_failed_page(
 ):
     plugin.config["enable_hidden_ctx_buffer"] = True
     pages = [object(), object(), object()]
-    plugin._render_content = AsyncMock(
-        return_value=plugin_main.RenderResult(images=pages, template="classic")
+    plugin.pipeline.render_for_layout = AsyncMock(
+        return_value=RenderResult(images=pages, template="classic")
     )
     event = fake_event_type()
     event.send = AsyncMock(side_effect=[None, RuntimeError("adapter failed")])
@@ -390,7 +392,7 @@ def test_agent_tool_reports_exact_failed_page(
     )
 
     assert results == ["第 2/3 页发送失败；此前已发送 1 页"]
-    assert plugin._hidden_ctx_buffer == {}
+    assert plugin.hidden_context._items == {}
 
 
 def test_background_discovery_is_limited_to_admin_asset_directory(
@@ -400,8 +402,6 @@ def test_background_discovery_is_limited_to_admin_asset_directory(
     background_dir.mkdir(parents=True)
     PILImage.new("RGB", (10, 10), "white").save(background_dir / "approved.png")
     PILImage.new("RGB", (10, 10), "black").save(tmp_path / "logo.png")
-    monkeypatch.setattr(plugin_main, "_PLUGIN_DIR", str(tmp_path))
+    plugin.templates.plugin_dir = str(tmp_path)
 
-    assert plugin._get_available_background_images() == [
-        "assets/backgrounds/approved.png"
-    ]
+    assert plugin.templates.background_images() == ["assets/backgrounds/approved.png"]

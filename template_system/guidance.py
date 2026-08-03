@@ -2,7 +2,7 @@ import re
 
 from astrbot.api import logger
 
-from .template_manager import TemplateManager
+from .manager import TemplateManager
 
 
 class TemplateGuidanceBuilder:

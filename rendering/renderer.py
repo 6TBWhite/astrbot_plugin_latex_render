@@ -761,9 +761,7 @@ async def _detect_css_animated_region(
             "width": min(bounds["width"] + padding * 2, viewport_width),
             "height": min(bounds["height"] + padding * 2, viewport_height),
         }
-        ratio = clip["width"] * clip["height"] / (
-            viewport_width * viewport_height
-        )
+        ratio = clip["width"] * clip["height"] / (viewport_width * viewport_height)
         if ratio > 0.8:
             logger.info(f"[GIF] 动画容器占页面 {ratio * 100:.0f}%，不裁切")
             return True, None
@@ -942,13 +940,10 @@ def _resolve_static_layout(
     page_height = options.max_page_height
     if options.fixed_page_size:
         layout = "paged"
-        page_height = int(
-            options.fixed_page_size.get("content_height", page_height)
-        )
+        page_height = int(options.fixed_page_size.get("content_height", page_height))
     elif layout == "single" and full_height > page_height * options.max_pages:
         raise ValueError(
-            f"单页高度 {full_height}px 超过绝对上限 "
-            f"{page_height * options.max_pages}px"
+            f"单页高度 {full_height}px 超过绝对上限 {page_height * options.max_pages}px"
         )
 
     should_paginate = layout == "paged" or (

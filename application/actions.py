@@ -8,14 +8,14 @@ from astrbot.api import logger
 from astrbot.api.message_components import Plain
 from astrbot.core.agent.message import TextPart
 
-from .config import RenderConfig, normalize_layout
+from ..config import RenderConfig, normalize_layout
+from ..preferences import PreferenceStore
+from ..rendering.models import RenderFailure, RenderResult
+from ..rendering.pipeline import RenderPipeline
+from ..template_system.manager import TemplateManager
+from ..template_system.service import TemplateService
 from .diagnostics import DiagnosticsService
 from .hidden_context import HiddenContextBuffer
-from .models import RenderFailure, RenderResult
-from .pipeline import RenderPipeline
-from .preferences import PreferenceStore
-from .template_manager import TemplateManager
-from .templates import TemplateService
 
 
 class RenderActions:
@@ -332,36 +332,49 @@ class RenderActions:
             yield "渲染失败：浏览器未生成图片。"
             return
         try:
-            if len(images) == 1:
-                await event.send(event.chain_result(images))
-            else:
-                for page_number, image in enumerate(images, start=1):
-                    try:
-                        await event.send(event.chain_result([image]))
-                    except Exception as exc:
-                        raise RenderFailure(
-                            "send_failed",
-                            f"第 {page_number}/{len(images)} 页发送失败；"
-                            f"此前已发送 {page_number - 1} 页",
-                        ) from exc
+            await self._send_images(event, images)
         except Exception as exc:
             logger.error(f"[HTML渲染] 图片已生成但发送失败: {exc}")
-            if isinstance(exc, RenderFailure) and exc.code == "send_failed":
-                yield exc.message
-            elif len(images) > 1:
-                yield f"共生成 {len(images)} 页，但整组图片发送失败，请检查消息平台连接后重试。"
-            else:
-                yield "图片已生成，但发送失败，请检查消息平台连接后重试。"
+            yield self._send_failure_message(exc, len(images))
             return
         self.hidden_context.record(event, content)
-        if len(images) == 1 and not warnings:
-            yield "图片已渲染并发送给用户。可对图片内容进行简要解说。"
-        else:
-            warning_text = f"；提示：{'；'.join(warnings)}" if warnings else ""
-            yield (
-                f"内容已渲染为 {len(images)} 页并发送给用户{warning_text}。"
-                "可对图片内容进行简要解说。"
+        yield self._send_success_message(len(images), warnings)
+
+    @staticmethod
+    async def _send_images(event, images: list) -> None:
+        if len(images) == 1:
+            await event.send(event.chain_result(images))
+            return
+        for page_number, image in enumerate(images, start=1):
+            try:
+                await event.send(event.chain_result([image]))
+            except Exception as exc:
+                raise RenderFailure(
+                    "send_failed",
+                    f"第 {page_number}/{len(images)} 页发送失败；"
+                    f"此前已发送 {page_number - 1} 页",
+                ) from exc
+
+    @staticmethod
+    def _send_failure_message(exc: Exception, image_count: int) -> str:
+        if isinstance(exc, RenderFailure) and exc.code == "send_failed":
+            return exc.message
+        if image_count > 1:
+            return (
+                f"共生成 {image_count} 页，但整组图片发送失败，"
+                "请检查消息平台连接后重试。"
             )
+        return "图片已生成，但发送失败，请检查消息平台连接后重试。"
+
+    @staticmethod
+    def _send_success_message(image_count: int, warnings: list[str]) -> str:
+        if image_count == 1 and not warnings:
+            return "图片已渲染并发送给用户。可对图片内容进行简要解说。"
+        warning_text = f"；提示：{'；'.join(warnings)}" if warnings else ""
+        return (
+            f"内容已渲染为 {image_count} 页并发送给用户{warning_text}。"
+            "可对图片内容进行简要解说。"
+        )
 
     async def template_guide(self, event, template: str = ""):
         yield self.templates.guidance(

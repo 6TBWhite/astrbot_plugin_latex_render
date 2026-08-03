@@ -11,25 +11,25 @@ def test_template_and_layout_preferences_survive_reload(
     event.message_str = "/渲染设置 布局 paged"
     layout_results = asyncio.run(collect_results(plugin.cmd_render_settings(event)))
 
-    payload = json.loads(Path(plugin.PREFERENCES_PATH).read_text(encoding="utf-8"))
-    key = plugin._get_preference_key(event)
+    payload = json.loads(plugin.preferences.path.read_text(encoding="utf-8"))
+    key = plugin.actions.preference_key(event)
     assert layout_results[0].payload.endswith("auto")
     assert payload["schema_version"] == 1
     assert payload["entries"][key] == {"layout": "auto", "template": "novel"}
 
-    plugin.user_preferences = {}
-    plugin.user_default_template = {}
-    plugin._load_preferences()
-    assert plugin._get_event_template(event) == "novel"
-    assert plugin._get_event_layout(event) == "auto"
+    plugin.preferences.entries = {}
+    plugin.templates.user_defaults = {}
+    plugin.preferences.load()
+    assert plugin.actions.event_template(event) == "novel"
+    assert plugin.actions.event_layout(event) == "auto"
 
 
 def test_corrupt_preferences_fall_back_without_blocking(plugin):
-    Path(plugin.PREFERENCES_PATH).write_text("{broken", encoding="utf-8")
+    Path(plugin.preferences.path).write_text("{broken", encoding="utf-8")
 
-    plugin._load_preferences()
+    plugin.preferences.load()
 
-    assert plugin.user_preferences == {}
+    assert plugin.preferences.entries == {}
 
 
 def test_render_reset_removes_only_current_conversation(
@@ -49,8 +49,8 @@ def test_render_reset_removes_only_current_conversation(
     first.message_str = "/渲染重置"
     asyncio.run(collect_results(plugin.cmd_render_reset(first)))
 
-    assert plugin._get_event_layout(first) == "auto"
-    assert plugin._get_event_layout(second) == "single"
+    assert plugin.actions.event_layout(first) == "auto"
+    assert plugin.actions.event_layout(second) == "single"
 
 
 def test_status_does_not_expose_absolute_paths(

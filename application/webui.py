@@ -16,19 +16,14 @@ except ImportError:
 
     request = None
 
-from .actions import RenderActions
-from .config import (
+from ..config import (
     STYLE_CONTROL_SPECS,
     WEB_CONFIG_SPECS,
-    RenderConfig,
     normalize_layout,
 )
-from .diagnostics import DiagnosticsService
-from .models import RenderFailure
-from .pipeline import RenderPipeline
-from .preferences import PreferenceStore
-from .template_manager import TemplateManager
-from .templates import TemplateService
+from ..rendering.models import RenderFailure
+from ..template_system.manager import TemplateManager
+from .actions import RenderActions
 
 
 class WebUIController:
@@ -54,22 +49,17 @@ class WebUIController:
     def __init__(
         self,
         context,
-        config: RenderConfig,
-        preferences: PreferenceStore,
-        templates: TemplateService,
-        pipeline: RenderPipeline,
-        diagnostics: DiagnosticsService,
         actions: RenderActions,
         plugin_name: str,
         version: str,
     ):
         self.context = context
-        self.config = config
-        self.preferences = preferences
-        self.templates = templates
-        self.pipeline = pipeline
-        self.diagnostics = diagnostics
         self.actions = actions
+        self.config = actions.config
+        self.preferences = actions.preferences
+        self.templates = actions.templates
+        self.pipeline = actions.pipeline
+        self.diagnostics = actions.diagnostics
         self.plugin_name = plugin_name
         self.version = version
 

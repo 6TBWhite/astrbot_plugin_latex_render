@@ -7,10 +7,10 @@ import os
 
 from astrbot.api import logger
 
-from .config import CLASSIC_STYLE_VARS, PAPER_STYLE_VARS, RenderConfig
-from .template_guidance import TemplateGuidanceBuilder
-from .template_manager import TemplateManager
-from .text_processing import markdown_to_html, nl2br, preserve_newlines
+from ..config import CLASSIC_STYLE_VARS, PAPER_STYLE_VARS, RenderConfig
+from ..rendering.text import markdown_to_html, nl2br, preserve_newlines
+from .guidance import TemplateGuidanceBuilder
+from .manager import TemplateManager
 
 
 class TemplateService:

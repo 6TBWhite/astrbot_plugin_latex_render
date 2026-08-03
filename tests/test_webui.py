@@ -3,6 +3,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from astrbot_plugin_latex_render_under_test.application import (
+    diagnostics as diagnostics_module,
+)
+from astrbot_plugin_latex_render_under_test.application import webui as webui_module
+from astrbot_plugin_latex_render_under_test.rendering.models import RenderResult
+from astrbot_plugin_latex_render_under_test.template_system.manager import (
+    TemplateManager,
+)
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 PAGE_PATH = PLUGIN_ROOT / "pages" / "studio" / "index.html"
@@ -64,7 +73,10 @@ def test_basic_settings_use_layered_cards_and_explanatory_tooltips(
     plugin,
 ) -> None:
     text = PAGE_PATH.read_text(encoding="utf-8")
-    fields = {item["key"]: item for item in plugin._web_config_payload()}
+    fields = {
+        item["key"]: item
+        for item in plugin.render_config.web_payload(plugin.templates.available())
+    }
     desktop_help_css = text[
         text.index(".config-help {") : text.index(".config-value-row {")
     ]
@@ -335,15 +347,15 @@ def test_webui_bootstrap_reports_runtime_contract(
     monkeypatch,
 ) -> None:
     plugin.config["default_layout"] = "paged"
-    monkeypatch.setattr(plugin_main, "json_response", lambda payload: payload)
+    monkeypatch.setattr(webui_module, "json_response", lambda payload: payload)
     monkeypatch.setattr(
-        plugin_main,
+        diagnostics_module,
         "get_renderer_status",
         lambda: {"browser_connected": True, "last_render_seconds": 0.25},
     )
-    monkeypatch.setattr(plugin, "_has_probable_cjk_font", lambda: True)
+    monkeypatch.setattr(plugin.diagnostics, "has_probable_cjk_font", lambda: True)
 
-    result = asyncio.run(plugin._api_page_bootstrap())
+    result = asyncio.run(plugin.webui.bootstrap())
 
     assert result["ok"] is True
     assert result["plugin"] == {
@@ -375,8 +387,9 @@ def test_webui_registers_all_page_routes(plugin, plugin_main) -> None:
             (path, handler.__name__, methods, description)
         )
     )
+    plugin.webui.context = plugin.context
 
-    plugin._register_page_api()
+    plugin.webui.register()
 
     paths = {item[0] for item in registered}
     assert {
@@ -401,9 +414,10 @@ def test_webui_config_save_validates_and_persists(plugin, plugin_main, monkeypat
     }
     plugin.config["save_config"] = "sentinel"
     plugin.config = SimpleConfig(plugin.config, saved)
-    monkeypatch.setattr(plugin_main, "json_response", lambda payload: payload)
+    plugin.render_config.raw = plugin.config
+    monkeypatch.setattr(webui_module, "json_response", lambda payload: payload)
     monkeypatch.setattr(
-        plugin_main,
+        webui_module,
         "request",
         FakeRequest(
             {
@@ -418,7 +432,7 @@ def test_webui_config_save_validates_and_persists(plugin, plugin_main, monkeypat
         ),
     )
 
-    result = asyncio.run(plugin._api_page_save_config())
+    result = asyncio.run(plugin.webui.save_config())
 
     assert result["ok"] is True
     assert plugin.config["default_layout"] == "auto"
@@ -433,10 +447,10 @@ def test_webui_config_reset_enables_code_highlight_by_default(
     plugin, plugin_main, monkeypatch
 ) -> None:
     plugin.config["enable_code_highlight"] = False
-    monkeypatch.setattr(plugin_main, "json_response", lambda payload: payload)
-    monkeypatch.setattr(plugin_main, "request", FakeRequest({}))
+    monkeypatch.setattr(webui_module, "json_response", lambda payload: payload)
+    monkeypatch.setattr(webui_module, "request", FakeRequest({}))
 
-    result = asyncio.run(plugin._api_page_reset_config())
+    result = asyncio.run(plugin.webui.reset_config())
 
     assert result["ok"] is True
     assert result["saved"]["enable_code_highlight"] is True
@@ -450,15 +464,16 @@ def test_webui_custom_save_is_persistent_and_rejects_active_content(
     tmp_path,
 ) -> None:
     custom_dir = tmp_path / "custom_templates"
-    plugin.template_mgr = plugin_main.TemplateManager(
+    plugin.template_mgr = TemplateManager(
         str(PLUGIN_ROOT / "templates"),
         str(custom_dir),
     )
     plugin.template_mgr.ensure_custom_slot()
-    monkeypatch.setattr(plugin_main, "json_response", lambda payload: payload)
+    plugin.templates.manager = plugin.template_mgr
+    monkeypatch.setattr(webui_module, "json_response", lambda payload: payload)
     safe_html = "<style>.page{color:#234}</style><main>{{content}}</main>"
     monkeypatch.setattr(
-        plugin_main,
+        webui_module,
         "request",
         FakeRequest(
             {
@@ -470,12 +485,12 @@ def test_webui_custom_save_is_persistent_and_rejects_active_content(
         ),
     )
 
-    saved = asyncio.run(plugin._api_page_save_template())
+    saved = asyncio.run(plugin.webui.save_template())
 
     assert saved["ok"] is True
     assert plugin.template_mgr.load_template("custom") == safe_html
     monkeypatch.setattr(
-        plugin_main,
+        webui_module,
         "request",
         FakeRequest(
             {
@@ -486,7 +501,7 @@ def test_webui_custom_save_is_persistent_and_rejects_active_content(
         ),
     )
 
-    rejected = asyncio.run(plugin._api_page_save_template())
+    rejected = asyncio.run(plugin.webui.save_template())
 
     assert rejected["error"] == "invalid_template"
     assert plugin.template_mgr.load_template("custom") == safe_html
@@ -509,17 +524,17 @@ def test_webui_draft_preview_returns_data_url(
 ):
     image_path = tmp_path / "preview.jpg"
     image_path.write_bytes(b"\xff\xd8preview\xff\xd9")
-    plugin._render_content = AsyncMock(
-        return_value=plugin_main.RenderResult(
+    plugin.pipeline.render = AsyncMock(
+        return_value=RenderResult(
             images=[SimpleNamespace(path=str(image_path))],
             template="classic",
             warnings=[],
             metrics={"image_count": 1, "duration_seconds": 0.1},
         )
     )
-    monkeypatch.setattr(plugin_main, "json_response", lambda payload: payload)
+    monkeypatch.setattr(webui_module, "json_response", lambda payload: payload)
     monkeypatch.setattr(
-        plugin_main,
+        webui_module,
         "request",
         FakeRequest(
             {
@@ -533,11 +548,11 @@ def test_webui_draft_preview_returns_data_url(
         ),
     )
 
-    result = asyncio.run(plugin._api_page_preview())
+    result = asyncio.run(plugin.webui.preview())
 
     assert result["ok"] is True
     assert result["images"][0].startswith("data:image/jpeg;base64,")
-    plugin._render_content.assert_awaited_once()
-    assert plugin._render_content.await_args.kwargs["template_html_override"] == (
+    plugin.pipeline.render.assert_awaited_once()
+    assert plugin.pipeline.render.await_args.kwargs["template_html_override"] == (
         "<main>{{content}}</main>"
     )

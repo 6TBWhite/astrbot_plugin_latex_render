@@ -7,6 +7,14 @@ from pathlib import Path
 import pytest
 from PIL import Image as PILImage, ImageStat
 
+from astrbot_plugin_latex_render_under_test.template_system.manager import (
+    TemplateManager,
+)
+from astrbot_plugin_latex_render_under_test.rendering.renderer import (
+    close_browser,
+    init_browser,
+)
+
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("ASTRBOT_LATEX_RENDER_INTEGRATION") != "1",
@@ -27,7 +35,7 @@ def test_real_chromium_covers_user_command_and_agent_tool(
 
     async def exercise_entrypoints():
         try:
-            await plugin_main.init_browser()
+            await init_browser()
             command_results = await collect_results(
                 plugin.cmd_test_render(command_event)
             )
@@ -41,7 +49,7 @@ def test_real_chromium_covers_user_command_and_agent_tool(
             probe_results = await collect_results(plugin.cmd_probe_gif(probe_event))
             return command_results, agent_results, probe_results
         finally:
-            await plugin_main.close_browser()
+            await close_browser()
 
     command_results, agent_results, probe_results = asyncio.run(exercise_entrypoints())
 
@@ -92,15 +100,15 @@ def test_real_chromium_paginates_to_identical_a4_pages(plugin, plugin_main) -> N
 
     async def render_paper():
         try:
-            await plugin_main.init_browser()
-            return await plugin._render_content(
+            await init_browser()
+            return await plugin.pipeline.render(
                 f"# 固定 A4 页面测试\n\n{paragraphs}",
                 "paper",
                 "user-1",
                 False,
             )
         finally:
-            await plugin_main.close_browser()
+            await close_browser()
 
     result = asyncio.run(render_paper())
 
@@ -118,17 +126,18 @@ def test_real_chromium_renders_distinct_aurora_custom_starter(
     plugin_main,
     tmp_path,
 ) -> None:
-    plugin.template_mgr = plugin_main.TemplateManager(
+    plugin.template_mgr = TemplateManager(
         str(Path(__file__).resolve().parents[1] / "templates"),
         str(tmp_path / "custom_templates"),
     )
     metadata = plugin.template_mgr.ensure_custom_slot()
     plugin.template_mgr.update_template_id_map()
+    plugin.templates.manager = plugin.template_mgr
 
     async def render_custom():
         try:
-            await plugin_main.init_browser()
-            return await plugin._render_content(
+            await init_browser()
+            return await plugin.pipeline.render(
                 "# Aurora 灵感\n\n"
                 "> 这是一张独立的深色 Custom 模板。\n\n"
                 "- 摘要\n- 公式 $a^2+b^2=c^2$\n\n"
@@ -138,7 +147,7 @@ def test_real_chromium_renders_distinct_aurora_custom_starter(
                 False,
             )
         finally:
-            await plugin_main.close_browser()
+            await close_browser()
 
     result = asyncio.run(render_custom())
 
@@ -158,13 +167,14 @@ def test_real_chromium_highlights_explicit_languages_across_templates(
     plugin_main,
     tmp_path,
 ) -> None:
-    plugin.template_mgr = plugin_main.TemplateManager(
+    plugin.template_mgr = TemplateManager(
         str(Path(__file__).resolve().parents[1] / "templates"),
         str(tmp_path / "custom_templates"),
     )
     plugin.template_mgr.ensure_custom_slot()
     plugin.template_mgr.update_template_id_map()
-    renderer = importlib.import_module(f"{plugin_main.__package__}.core.renderer")
+    plugin.templates.manager = plugin.template_mgr
+    renderer = importlib.import_module(f"{plugin_main.__package__}.rendering.renderer")
     source = """
 ```python
 def greet(name):
@@ -202,14 +212,16 @@ plain unlabelled code
         disabled_state = None
         disabled_result = None
         try:
-            await plugin_main.init_browser()
+            await init_browser()
             browser = await renderer._get_browser()
             assert browser is not None
             for template in ("classic", "novel", "paper", "custom"):
-                _, _, html, _ = plugin._prepare_render_document(
+                _, _, html, _ = plugin.documents.build(
                     source, template, "user-1", None, None
                 )
-                context = await browser.new_context(viewport={"width": 794, "height": 800})
+                context = await browser.new_context(
+                    viewport={"width": 794, "height": 800}
+                )
                 page = await context.new_page()
                 try:
                     await renderer._install_network_policy(page)
@@ -238,12 +250,12 @@ plain unlabelled code
                 finally:
                     await context.close()
 
-            novel_result = await plugin._render_content(
+            novel_result = await plugin.pipeline.render(
                 source, "novel", "user-1", False
             )
 
             plugin.config["enable_code_highlight"] = False
-            _, _, disabled_html, _ = plugin._prepare_render_document(
+            _, _, disabled_html, _ = plugin.documents.build(
                 source, "classic", "user-1", None, None
             )
             context = await browser.new_context(viewport={"width": 794, "height": 800})
@@ -278,12 +290,12 @@ plain unlabelled code
             finally:
                 await context.close()
 
-            disabled_result = await plugin._render_content(
+            disabled_result = await plugin.pipeline.render(
                 source, "classic", "user-1", False
             )
             return states, novel_result, disabled_state, disabled_result
         finally:
-            await plugin_main.close_browser()
+            await close_browser()
 
     states, novel_result, disabled_state, disabled_result = asyncio.run(
         inspect_templates()

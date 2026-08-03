@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from core.config import WEB_CONFIG_SPECS, RenderConfig
-from core.preferences import PreferenceStore
+from astrbot_plugin_latex_render_under_test.config import WEB_CONFIG_SPECS, RenderConfig
+from astrbot_plugin_latex_render_under_test.preferences import PreferenceStore
 
 
 class SavingConfig(dict):
@@ -46,11 +46,16 @@ def test_render_config_rejects_remote_assets_without_trusted_mode() -> None:
         config.normalize_web_values({"allow_remote_assets": True}, ["classic"])
 
 
-def test_preference_store_preserves_schema_and_normalizes_legacy_layout(tmp_path) -> None:
+def test_preference_store_preserves_schema_and_normalizes_legacy_layout(
+    tmp_path,
+) -> None:
     path = tmp_path / "preferences.json"
     path.write_text(
         json.dumps(
-            {"schema_version": 1, "entries": {"session": {"template": "novel", "layout": "paged"}}},
+            {
+                "schema_version": 1,
+                "entries": {"session": {"template": "novel", "layout": "paged"}},
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",

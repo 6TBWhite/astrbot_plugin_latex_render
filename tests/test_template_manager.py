@@ -1,7 +1,9 @@
 import asyncio
 from pathlib import Path
 
-from core.template_manager import TemplateManager
+from astrbot_plugin_latex_render_under_test.template_system.manager import (
+    TemplateManager,
+)
 
 
 def test_template_discovery_and_prompt_stripping(tmp_path) -> None:
@@ -50,9 +52,7 @@ def test_invalid_template_without_content_placeholder_is_ignored(tmp_path) -> No
 
 
 def test_manifest_describes_fixed_a4_paper_template(plugin_main) -> None:
-    manager = plugin_main.TemplateManager(
-        str(Path(__file__).resolve().parents[1] / "templates")
-    )
+    manager = TemplateManager(str(Path(__file__).resolve().parents[1] / "templates"))
     metadata = manager.get_template_metadata("paper")
 
     assert metadata["display_name"].startswith("Paper")

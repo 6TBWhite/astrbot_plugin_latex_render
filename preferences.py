@@ -102,4 +102,3 @@ class PreferenceStore:
         if cleared:
             self.save()
         return cleared
-

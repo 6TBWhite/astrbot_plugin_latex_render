@@ -11,8 +11,8 @@ import re
 from PIL import Image as PILImage
 from astrbot.api import logger
 
-from .config import RenderConfig
-from .templates import TemplateService
+from ..config import RenderConfig
+from ..template_system.service import TemplateService
 
 
 CODE_THEME_BY_SCENE = {

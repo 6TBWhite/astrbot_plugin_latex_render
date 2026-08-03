@@ -4,14 +4,23 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.config import RenderConfig
-from core.document import HtmlDocumentBuilder
-from core.document_assets import HtmlAssets
-from core.models import BrowserRenderResult, RenderFailure
-from core.pipeline import RenderPipeline
-from core.renderer import RenderOptions
-from core.template_manager import TemplateManager
-from core.templates import TemplateService
+from astrbot_plugin_latex_render_under_test.config import RenderConfig
+from astrbot_plugin_latex_render_under_test.rendering.assets import HtmlAssets
+from astrbot_plugin_latex_render_under_test.rendering.document import (
+    HtmlDocumentBuilder,
+)
+from astrbot_plugin_latex_render_under_test.rendering.models import (
+    BrowserRenderResult,
+    RenderFailure,
+)
+from astrbot_plugin_latex_render_under_test.rendering.pipeline import RenderPipeline
+from astrbot_plugin_latex_render_under_test.rendering.renderer import RenderOptions
+from astrbot_plugin_latex_render_under_test.template_system.manager import (
+    TemplateManager,
+)
+from astrbot_plugin_latex_render_under_test.template_system.service import (
+    TemplateService,
+)
 
 
 def _services(tmp_path: Path, config_values: dict | None = None):
@@ -91,7 +100,10 @@ def test_pipeline_retries_only_browser_failures(tmp_path, monkeypatch) -> None:
             BrowserRenderResult(True, paths=["render.jpg"]),
         ]
     )
-    monkeypatch.setattr("core.pipeline.html_to_image_playwright", renderer)
+    monkeypatch.setattr(
+        "astrbot_plugin_latex_render_under_test.rendering.pipeline.html_to_image_playwright",
+        renderer,
+    )
 
     result = asyncio.run(
         pipeline.run_browser(

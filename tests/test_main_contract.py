@@ -150,3 +150,25 @@ def test_template_query_tool_contract() -> None:
         return
 
     raise AssertionError("latex_render_template_guide_tool not found")
+
+
+def test_service_modules_are_bounded_and_never_import_main() -> None:
+    assert len(MAIN_PATH.read_text(encoding="utf-8").splitlines()) < 600
+    for directory in ("application", "rendering", "template_system"):
+        for path in (PLUGIN_ROOT / directory).glob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            if path.name != "renderer.py":
+                assert len(source.splitlines()) < 600, path
+            tree = ast.parse(source)
+            imports = [
+                alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Import)
+                for alias in node.names
+            ]
+            imports.extend(
+                node.module or ""
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+            )
+            assert not any(name == "main" or name.endswith(".main") for name in imports)
