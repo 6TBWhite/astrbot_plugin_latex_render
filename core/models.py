@@ -39,3 +39,14 @@ class RenderFailure(RuntimeError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+@dataclass
+class RenderRuntimeSnapshot:
+    """High-level queue, cooldown, and last-result state."""
+
+    active_renders: int = 0
+    queued_renders: int = 0
+    last_metrics: dict[str, Any] = field(default_factory=dict)
+    last_error: dict[str, Any] = field(default_factory=dict)
+    cooldown_seconds: int = 0
