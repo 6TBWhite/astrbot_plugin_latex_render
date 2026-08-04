@@ -11,9 +11,9 @@ class TemplateManager:
     """Manage read-only built-in templates and persistent custom templates."""
 
     CUSTOM_STARTER_NAME = "custom"
-    CUSTOM_STARTER_DISPLAY_NAME = "Aurora 灵感卡"
+    CUSTOM_STARTER_DISPLAY_NAME = "Custom 起始页"
     CUSTOM_STARTER_DESCRIPTION = (
-        "深色渐变卡片，适合灵感记录、摘要与展示；可在 Custom 编辑中自由改版。"
+        "自由编辑的 HTML/CSS 起始模板，不绑定排版滑条，可任意改版。"
     )
     CUSTOM_STARTER_TAGS = ["自由改版", "HTML/CSS", "实时预览"]
     _BUILTIN_PROMPT_PATTERN = re.compile(
@@ -106,7 +106,11 @@ class TemplateManager:
             )
 
     def get_available_templates(self) -> List[str]:
-        """Return readable HTML templates containing the content placeholder."""
+        """Return readable HTML templates containing the content placeholder.
+
+        Built-in templates follow manifest order, then custom templates alphabetically,
+        so the default template stays stable as new built-ins are added.
+        """
         templates = set()
         for directory in self._template_directories():
             if not os.path.isdir(directory):
@@ -125,7 +129,18 @@ class TemplateManager:
                             )
                 except Exception as exc:
                     logger.warning(f"[HTML渲染] 已忽略无法读取的模板 {filepath}: {exc}")
-        return sorted(templates)
+        builtin = {
+            name
+            for name in templates
+            if os.path.isfile(os.path.join(self.TEMPLATE_DIR, f"{name}.html"))
+        }
+        manifest_index = {name: index for index, name in enumerate(self.manifest)}
+        builtin_sorted = sorted(
+            builtin,
+            key=lambda name: (manifest_index.get(name, len(self.manifest)), name),
+        )
+        custom_sorted = sorted(templates - builtin)
+        return builtin_sorted + custom_sorted
 
     def get_builtin_templates(self) -> List[str]:
         return self._available_in_directory(self.TEMPLATE_DIR)
@@ -321,6 +336,8 @@ class TemplateManager:
             ),
             "base_template": base_template,
         }
+        if normalized == self.CUSTOM_STARTER_NAME:
+            metadata["css_variables"] = []
         self.custom_manifest[normalized] = metadata
         self._save_custom_manifest()
         self.templates[normalized] = content

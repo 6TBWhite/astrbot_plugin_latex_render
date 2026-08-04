@@ -146,6 +146,9 @@ class TemplateService:
 
     def style_definitions(self, template_name: str) -> list[tuple[str, str, str]]:
         metadata = self.manager.get_template_metadata(template_name)
+        declared = metadata.get("css_variables")
+        if isinstance(declared, list) and not declared:
+            return []
         family = str(metadata.get("base_template", template_name) or template_name)
         return {"classic": CLASSIC_STYLE_VARS, "paper": PAPER_STYLE_VARS}.get(
             family, []

@@ -16,7 +16,7 @@ def test_market_metadata_is_complete_and_consistent() -> None:
 
     assert version_match is not None
     assert metadata["id"] == metadata["name"] == "astrbot_plugin_latex_render"
-    assert metadata["version"] == version_match.group(1) == "1.3.0"
+    assert metadata["version"] == version_match.group(1) == "1.3.1"
     assert metadata["type"] == "star"
     assert metadata["category"] == "工具"
     assert metadata["branch"] == "master"
@@ -37,9 +37,10 @@ def test_current_release_is_documented() -> None:
     assert (
         "img.shields.io/github/v/release/6TBWhite/astrbot_plugin_latex_render" in readme
     )
-    assert "当前发布版本为 `1.3.0`" in readme
+    assert "当前发布版本为 `1.3.1`" in readme
     assert "development-v1.2.3" not in readme
     assert "支持自动分页与 A4 版式" in readme
+    assert "2026-08-04：v1.3.1 模板体系调整（Aurora 内置化与 Custom 解绑）" in changelog
     assert "2026-08-04：v1.3.0 模块化重构与渲染修复" in changelog
     assert "2026-08-02：v1.2.3 代码高亮与语言标识开关" in changelog
     assert "2026-08-02：v1.2.2 Agent 工具命名空间与模板指南" in changelog

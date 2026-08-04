@@ -121,7 +121,7 @@ def test_single_custom_slot_is_created_once_without_overwriting_edits(tmp_path) 
 
     metadata = manager.ensure_custom_slot()
     assert "class='aurora'" in manager.load_template("custom")
-    assert "可在 Custom 编辑中自由改版" in metadata["description"]
+    assert "自由编辑的 HTML/CSS 起始模板" in metadata["description"]
     assert metadata["tags"] == ["自由改版", "HTML/CSS", "实时预览"]
     manager.save_custom_template(
         "custom",
@@ -130,7 +130,7 @@ def test_single_custom_slot_is_created_once_without_overwriting_edits(tmp_path) 
     )
     manager.ensure_custom_slot()
 
-    assert metadata["display_name"] == "Aurora 灵感卡"
+    assert metadata["display_name"] == "Custom 起始页"
     assert manager.get_custom_templates() == ["custom"]
     assert "class='edited'" in manager.load_template("custom")
 
@@ -153,7 +153,7 @@ def test_legacy_classic_custom_is_upgraded_without_touching_user_edits(
     migrated = manager.ensure_custom_slot()
 
     assert manager.load_template("custom") == aurora
-    assert migrated["display_name"] == "Aurora 灵感卡"
+    assert migrated["display_name"] == "Custom 起始页"
     assert migrated["tags"] == ["自由改版", "HTML/CSS", "实时预览"]
 
     edited = "<main class='my-own-design'>{{content}}</main>"
@@ -175,11 +175,12 @@ def test_real_custom_starter_is_distinct_and_not_discovered_as_builtin(
     metadata = manager.ensure_custom_slot()
     html = manager.load_template("custom")
 
-    assert manager.get_builtin_templates() == ["classic", "novel", "paper"]
+    assert manager.get_builtin_templates() == ["aurora", "classic", "novel", "paper"]
+    assert manager.get_available_templates()[:4] == ["classic", "aurora", "novel", "paper"]
     assert html != manager.load_template("classic")
-    assert "aurora-card" in html
-    assert metadata["display_name"] == "Aurora 灵感卡"
-    assert "可在 Custom 编辑中自由改版" in metadata["description"]
+    assert "broadside" in html
+    assert metadata["display_name"] == "Custom 起始页"
+    assert "自由编辑的 HTML/CSS 起始模板" in metadata["description"]
 
 
 def test_custom_template_validation_rejects_active_content(tmp_path) -> None:

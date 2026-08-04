@@ -20,6 +20,25 @@
         "classic_h3_size"
       ]
     },
+    "aurora": {
+      "display_name": "Aurora 灵感卡",
+      "description": "深色渐变卡片，适合灵感记录、摘要与展示，支持排版滑条微调。",
+      "scene": "inspiration",
+      "thumbnail": "dynamic",
+      "tags": ["深色卡片", "灵感记录", "渐变"],
+      "preferred_width": 600,
+      "themes": ["default"],
+      "css_variables": [
+        "classic_body_padding",
+        "classic_page_padding_y",
+        "classic_page_padding_x",
+        "classic_font_size",
+        "classic_line_height",
+        "classic_h1_size",
+        "classic_h2_size",
+        "classic_h3_size"
+      ]
+    },
     "novel": {
       "display_name": "Novel 小说页",
       "description": "适合叙事、对白、场景与内心独白。",

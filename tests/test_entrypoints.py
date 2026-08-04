@@ -240,7 +240,7 @@ def test_template_query_handles_unknown_and_empty_catalog(
     )
 
     assert "未找到模板：missing-template" in unknown_results[0]
-    assert "当前可用模板：classic、custom、novel、paper" in unknown_results[0]
+    assert "当前可用模板：classic、aurora、novel、paper、custom" in unknown_results[0]
 
     monkeypatch.setattr(plugin.templates, "available", lambda: [])
     empty_results = asyncio.run(

@@ -284,7 +284,7 @@ def test_custom_editor_is_a_single_live_slot_with_backup_workflow() -> None:
     assert "</style>" not in starter
     assert "</body>" not in starter
     assert "</html>" not in starter
-    assert "background: radial-gradient" in starter
+    assert "background: #e9e2d3" in starter
 
 
 def test_studio_product_copy_avoids_internal_implementation_notes() -> None:
@@ -302,8 +302,8 @@ def test_studio_product_copy_avoids_internal_implementation_notes() -> None:
     assert "查看浏览器、公式、字体、队列和最近错误" in text
     assert "一目了然" not in text
     assert "修改内容后会自动更新预览" in text
-    assert "Aurora 灵感卡" in text
-    assert "可在 Custom 编辑中自由改版" in text
+    assert "Custom 起始页" in text
+    assert "自由编辑的 HTML/CSS 起始模板" in text
 
 
 def test_gallery_uses_scene_and_trait_tags_instead_of_generic_capabilities() -> None:
@@ -479,7 +479,7 @@ def test_webui_custom_save_is_persistent_and_rejects_active_content(
             {
                 "name": "custom",
                 "html": safe_html,
-                "display_name": "Aurora 灵感卡",
+                "display_name": "Custom 起始页",
                 "base_template": "classic",
             }
         ),

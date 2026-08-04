@@ -151,7 +151,7 @@ def test_real_chromium_renders_distinct_aurora_custom_starter(
 
     result = asyncio.run(render_custom())
 
-    assert metadata["display_name"] == "Aurora 灵感卡"
+    assert metadata["display_name"] == "Custom 起始页"
     assert result.template == "custom"
     assert len(result.images) == 1
     with PILImage.open(result.images[0].path) as rendered:
@@ -159,7 +159,7 @@ def test_real_chromium_renders_distinct_aurora_custom_starter(
         assert rendered.width == 1200
         assert rendered.height >= 500
         mean = ImageStat.Stat(rendered.convert("RGB")).mean
-        assert sum(mean) / len(mean) < 110
+        assert sum(mean) / len(mean) > 150
 
 
 def test_real_chromium_highlights_explicit_languages_across_templates(

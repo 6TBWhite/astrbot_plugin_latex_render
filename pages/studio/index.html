@@ -1136,6 +1136,7 @@
         knowledge: "知识讲解",
         story: "叙事阅读",
         paper: "论文排版",
+        inspiration: "灵感记录",
         custom: "自由编辑",
       };
       return labels[item.scene] || (item.source === "custom" ? "自由编辑" : "通用模板");
@@ -1393,20 +1394,19 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 24px;
-      color: #e9ecff;
-      background: radial-gradient(circle at 12% 8%, #49328f, transparent 34%), #090b18;
+      padding: 28px;
+      color: #26221c;
+      background: #e9e2d3;
       font-family: "Microsoft YaHei", sans-serif;
     }
     .page {
       width: 640px;
-      padding: 36px;
-      border: 1px solid rgba(186, 195, 255, .22);
-      border-radius: 22px;
-      background: rgba(17, 20, 42, .92);
-      box-shadow: 0 26px 70px rgba(0, 0, 0, .42);
+      padding: 40px 44px;
+      border: 1px solid #d5cbb6;
+      background: #faf6ec;
+      box-shadow: 0 12px 34px rgba(84, 66, 40, .16);
     }
-    .content { color: #e9ecff; font-size: 19px; line-height: 1.75; }
+    .content { color: #26221c; font-size: 17px; line-height: 1.9; }
   <\/style>
 <\/head>
 <body>
@@ -1477,8 +1477,8 @@
       try {
         const result = await apiPost(path("template/save"), {
           name: "custom",
-          display_name: "Aurora 灵感卡",
-          description: "深色渐变卡片，适合灵感记录、摘要与展示；可在 Custom 编辑中自由改版。",
+          display_name: "Custom 起始页",
+          description: "自由编辑的 HTML/CSS 起始模板，不绑定排版滑条，可任意改版。",
           base_template: state.customBase,
           html: $("#custom-html").value,
         });

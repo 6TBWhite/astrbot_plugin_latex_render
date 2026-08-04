@@ -199,8 +199,8 @@ $$
         },
         {
             "name": "custom",
-            "display_name": "Aurora 灵感卡",
-            "description": "深色渐变卡片，适合灵感记录、摘要与展示；可在 Custom 编辑中自由改版。",
+            "display_name": "Custom 起始页",
+            "description": "自由编辑的 HTML/CSS 起始模板，不绑定排版滑条，可任意改版。",
             "scene": "custom",
             "tags": ["自由改版", "HTML/CSS", "实时预览"],
             "source": "custom",
@@ -389,7 +389,7 @@ async def _exercise_webui() -> None:
             )
             assert (
                 await page.locator(".template-card")
-                .filter(has_text="Aurora 灵感卡")
+                .filter(has_text="Custom 起始页")
                 .get_by_text("自由改版", exact=True)
                 .is_visible()
             )
