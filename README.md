@@ -28,7 +28,7 @@ LaTeX Render 给 AstrBot 增加 `latex_render_to_image` 与 `latex_render_templa
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前发布版本为 `1.2.3`，要求 AstrBot `>=4.26.3`。
+当前发布版本为 `1.3.0`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 

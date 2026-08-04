@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-08-04：v1.3.0 模块化重构与渲染修复
+
+### 摘要
+
+本版本将插件的单入口与扁平模块重组为分层架构：渲染管线、模板系统与业务动作各自独立成包，入口文件收敛为组合根。对外行为（聊天命令、LLM 工具、配置项、内置模板与工作台页面）保持不变，同时修复 Playwright 浏览器版本误判与 MathJax 分隔符转义回归。
+
+### 架构调整
+
+- `core/` 按职责拆分为 `rendering/`（浏览器渲染、文档组装、资源注入、安全清洗与文本处理）、`template_system/`（模板发现、校验、选择与指南）和 `application/`（命令与工具业务、诊断、隐藏上下文缓冲、工作台控制器）三个包
+- 新增 `config.py`（类型化配置读取与限幅）与 `preferences.py`（会话渲染偏好原子持久化）
+- `main.py` 精简为组合根与装饰器薄适配层，业务逻辑下沉到 `application/actions.py`
+- 渲染流程收敛到 `rendering/pipeline.py`（队列、超时、重试、冷却与结果规范化），浏览器生命周期由 `rendering/browser_runtime.py` 统一管理
+
+### 行为修复
+
+- 修复 Playwright 浏览器版本误判：此前只检查数据目录下是否存在任意 `chromium_headless_shell*` 目录，Playwright 升级导致浏览器 revision 变化时会误跳过安装；现改为读取 Playwright `browsers.json` 清单，按精确 revision 校验对应目录及其中的 `chrome-headless-shell` 可执行文件，不匹配时重新安装
+- 修复 MathJax `inlineMath` / `displayMath` 分隔符转义回归：注入页面的 `\(...\)` 与 `\[...\]` 配置丢失一层反斜杠，导致行内与块级公式均停留在原始 LaTeX 文本
+- 新增回归测试，覆盖浏览器版本判断与 MathJax 转义，防止再次回归
+
+### 兼容性
+
+- 聊天命令、LLM 工具（`latex_render_to_image` / `latex_render_template_guide`）、配置项与 `_conf_schema.json`、内置模板与 WebUI 工作台均与 v1.2.3 保持一致
+- 用户持久化偏好、缓存与浏览器目录结构不变，升级无需迁移
+
+### 验证
+
+- 普通测试：127 passed，5 skipped（含 Playwright 版本判断与 MathJax 转义回归测试）
+- 真实 Chromium 端到端：修复前 `mjx-container` 为 0，修复后行内与块级公式均正常渲染
+
+---
+
 ## 2026-08-02：v1.2.3 代码高亮与语言标识开关
 
 ### 摘要
