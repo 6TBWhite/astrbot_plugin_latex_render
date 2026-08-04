@@ -59,10 +59,12 @@ http://<AstrBot 地址>/#/plugin-page/astrbot_plugin_latex_render/studio
 | 区域        | 功能                                                                | 边界                                        |
 | --------- | ----------------------------------------------------------------- | ----------------------------------------- |
 | 基础设置      | 调整常用配置与自动分页高度，查看 Chromium、MathJax、CJK 字体、渲染队列和错误状态                | 完整配置仍在 AstrBot 配置页                        |
-| 模板画廊      | 选择模板与分页布局，编辑 Markdown 样例，通过 preview API 查看实际分页结果                  | 内置模板只读；滑条只显示模板 manifest 公开的 CSS variables |
-| Custom 编辑 | 编辑固定 `custom` 槽的 HTML/CSS 和 Markdown 样例，通过草稿渲染预览后保存；支持 JSON 导入和导出 | 只维护一个 `custom`；模板校验会拒绝主动内容和远程 URL         |
+| 模板画廊      | 选择模板与分页布局，编辑 Markdown 样例，滑条与内容变化即时刷新预览                           | 内置模板只读；滑条只显示模板 manifest 公开的 CSS variables |
+| Custom 编辑 | 编辑固定 `custom` 槽的 HTML/CSS 和 Markdown 样例，通过草稿渲染预览后保存，可一键恢复默认起始稿；支持 JSON 导入和导出 | 只维护一个 `custom`；模板校验会拒绝主动内容和远程 URL         |
 
 预览画布支持缩放、适应页面、多页切换和可选抓手。抓手默认关闭，普通滚轮继续滚动页面，`Ctrl/Command + 滚轮`用于缩放。Gallery 与 Custom 的 Markdown 内容卡片会完整展示默认测试文本；超长输入达到保护高度后使用卡片内部滚动，避免无限拉长页面。
+
+画廊左侧模板选择器固定 290px，滑条栏固定 340px，预览画布占据剩余宽度；Gallery 与 Custom 的预览画布统一高度，约为视口高度减 160px，并在 700–920px 之间钳制。
 
 内置模板保存在源码目录并保持只读。`custom` 保存在 `data/plugin_data/astrbot_plugin_latex_render/custom_templates/`，已保存的个性化编辑不会被插件升级覆盖。
 

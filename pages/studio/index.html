@@ -313,7 +313,7 @@
       white-space: pre-wrap;
     }
     .studio-grid {
-      display: grid; grid-template-columns: 270px minmax(0,1fr);
+      display: grid; grid-template-columns: 290px minmax(0,1fr);
       align-items: start; gap: 16px;
     }
     .roster {
@@ -353,8 +353,11 @@
     .gallery-workspace > .controls { grid-area: controls; }
     .preview-viewer {
       display: grid; grid-area: preview;
-      grid-template-rows: auto minmax(560px,1fr) auto;
+      grid-template-rows: auto minmax(0,1fr) auto;
       min-width: 0; min-height: 0;
+    }
+    .gallery-workspace .preview-stage {
+      height: auto; min-height: clamp(700px,calc(100vh - 160px),920px);
     }
     .gallery-workspace > .preview-source { grid-area: source; margin-top: 0; }
     .controls { display: grid; gap: 13px; align-content: start; }
@@ -430,7 +433,6 @@
         var(--bg);
       contain: layout paint;
     }
-    .gallery-workspace .preview-stage { height: auto; min-height: 560px; }
     .preview-stage.hand-active { cursor: grab; touch-action: none; }
     .preview-stage.dragging { cursor: grabbing; }
     .preview-canvas {
@@ -502,7 +504,7 @@
       .custom-layout .preview-stage {
         height: clamp(480px,62vh,720px); min-height: 480px;
       }
-      .gallery-workspace { grid-template-columns: 300px minmax(0,1fr); }
+      .gallery-workspace { grid-template-columns: 340px minmax(0,1fr); }
     }
     @media (max-width: 820px) {
       .shell { width: min(100% - 20px,1440px); padding-top: 16px; }
@@ -648,10 +650,9 @@
                 </div>
                 <div id="style-controls" class="controls"></div>
                 <div class="button-row">
-                  <button id="preview-now" class="primary" type="button">立即预览</button>
                   <button id="reset-style" class="quiet" type="button">重置滑条</button>
                 </div>
-                <p class="muted">调整排版后会自动更新预览，也可点击“立即预览”。</p>
+                <p class="muted">调整排版后会自动更新预览。</p>
               </div>
               <section class="preview-viewer">
                 <div class="preview-toolbar" data-preview-toolbar="gallery">
@@ -746,7 +747,7 @@
               <textarea id="custom-html" class="code-editor" spellcheck="false"></textarea>
             </div>
             <div class="custom-actions">
-              <button id="preview-custom" type="button">立即预览</button>
+              <button id="reset-custom" type="button">恢复默认</button>
               <button class="primary" type="submit">保存 Custom</button>
               <span class="muted">修改内容后会自动更新预览。</span>
             </div>
@@ -1385,35 +1386,6 @@
       state.previewTimer = setTimeout(runGalleryPreview, immediate ? 0 : 550);
     }
 
-    function starterTemplate() {
-      return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 28px;
-      color: #26221c;
-      background: #e9e2d3;
-      font-family: "Microsoft YaHei", sans-serif;
-    }
-    .page {
-      width: 640px;
-      padding: 40px 44px;
-      border: 1px solid #d5cbb6;
-      background: #faf6ec;
-      box-shadow: 0 12px 34px rgba(84, 66, 40, .16);
-    }
-    .content { color: #26221c; font-size: 17px; line-height: 1.9; }
-  <\/style>
-<\/head>
-<body>
-  <main class="page"><div class="content">{{content}}<\/div><\/main>
-<\/body>
-<\/html>`;
-    }
     async function loadCustomSlot({ preview = true } = {}) {
       if (state.customLoaded) {
         if (preview) scheduleCustomPreview(true);
@@ -1431,7 +1403,7 @@
         showError("");
       } catch (error) {
         state.customBase = "classic";
-        $("#custom-html").value ||= starterTemplate();
+        $("#custom-html").value ||= state.bootstrap?.default_custom_html || "";
         $("#custom-content").value ||= state.bootstrap?.preview_content || "# Custom 预览";
         syncPreviewSource("custom");
         state.customLoaded = true;
@@ -1648,7 +1620,6 @@
       setPreviewSourceEditing("gallery", editing);
     });
     $("#gallery-layout").addEventListener("change", () => scheduleGalleryPreview(true));
-    $("#preview-now").addEventListener("click", () => scheduleGalleryPreview(true));
     $("#edit-custom-template").addEventListener("click", () => setActiveView("custom"));
     $("#save-style").addEventListener("click", async () => {
       const template = templateByName(state.selectedTemplate);
@@ -1714,7 +1685,11 @@
       renderPreview(kind);
     });
 
-    $("#preview-custom").addEventListener("click", () => scheduleCustomPreview(true));
+    $("#reset-custom").addEventListener("click", async event => {
+      if (!confirmAgain("reset-custom", event.currentTarget, "恢复默认")) return;
+      $("#custom-html").value = state.bootstrap?.default_custom_html || "";
+      await saveCustomSlot("Custom 已恢复为默认模板");
+    });
     $("#custom-html").addEventListener("input", () => scheduleCustomPreview());
     $("#custom-content").addEventListener("input", () => {
       syncPreviewSource("custom");

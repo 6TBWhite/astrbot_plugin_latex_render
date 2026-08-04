@@ -11,6 +11,7 @@ class TemplateManager:
     """Manage read-only built-in templates and persistent custom templates."""
 
     CUSTOM_STARTER_NAME = "custom"
+    CUSTOM_STARTER_FILE = "custom.default.html"
     CUSTOM_STARTER_DISPLAY_NAME = "Custom 起始页"
     CUSTOM_STARTER_DESCRIPTION = (
         "自由编辑的 HTML/CSS 起始模板，不绑定排版滑条，可任意改版。"
@@ -389,7 +390,7 @@ class TemplateManager:
         starter_path = os.path.join(
             self.TEMPLATE_DIR,
             "_starters",
-            f"{self.CUSTOM_STARTER_NAME}.html",
+            self.CUSTOM_STARTER_FILE,
         )
         if not os.path.isfile(starter_path):
             return ""

@@ -220,11 +220,9 @@ def test_gallery_viewer_matches_control_row_and_stacks_on_mobile() -> None:
 
     assert 'grid-template-areas: "controls preview" ". source"' in desktop_css
     assert ".gallery-workspace > .controls { grid-area: controls; }" in desktop_css
-    assert "grid-template-rows: auto minmax(560px,1fr) auto" in desktop_css
+    assert "grid-template-rows: auto minmax(0,1fr) auto" in desktop_css
     assert ".gallery-workspace > .preview-source { grid-area: source;" in desktop_css
-    assert (
-        ".gallery-workspace .preview-stage { height: auto; min-height: 560px; }" in text
-    )
+    assert "min-height: clamp(700px,calc(100vh - 160px),920px)" in text
     assert 'grid-template-areas: "controls" "preview" "source"' in mobile_css
     assert "height: 62vh; min-height: 360px" in mobile_css
 
@@ -258,7 +256,10 @@ def test_custom_editor_is_a_single_live_slot_with_backup_workflow() -> None:
     assert "scheduleCustomPreview" in text
     assert "customPreviewGeneration" in text
     assert "700" in text
-    assert "立即预览" in text
+    assert "立即预览" not in text
+    assert "恢复默认" in text
+    assert 'id="reset-custom"' in text
+    assert "state.bootstrap?.default_custom_html" in text
     assert "保存 Custom" in text
     assert "编辑 Custom" in text
     assert "导出备份" in text
@@ -276,15 +277,6 @@ def test_custom_editor_is_a_single_live_slot_with_backup_workflow() -> None:
     assert "!confirm(" not in text
     assert "@media (max-width: 820px)" in text
     assert "@media (max-width: 560px)" in text
-    starter = text[
-        text.index("function starterTemplate") : text.index(
-            "async function loadCustomSlot"
-        )
-    ]
-    assert "</style>" not in starter
-    assert "</body>" not in starter
-    assert "</html>" not in starter
-    assert "background: #e9e2d3" in starter
 
 
 def test_studio_product_copy_avoids_internal_implementation_notes() -> None:
@@ -364,6 +356,7 @@ def test_webui_bootstrap_reports_runtime_contract(
         "version": plugin_main.__version__,
     }
     assert "# HTML Render Preview" in result["preview_content"]
+    assert "{{content}}" in result["default_custom_html"]
     assert {"classic", "novel", "paper"} <= {
         template["name"] for template in result["templates"]
     }
@@ -378,6 +371,20 @@ def test_webui_bootstrap_reports_runtime_contract(
     assert fields["trusted_html_mode"]["danger"] is True
     assert result["status"]["browser_connected"] is True
     assert result["status"]["cjk_font_available"] is True
+
+
+def test_aurora_injects_classic_style_vars(plugin) -> None:
+    name, _, html, _ = plugin.documents.build(
+        "# 标题\n\n正文",
+        "aurora",
+        "user-1",
+        {"classic_font_size": "30"},
+        None,
+    )
+
+    assert name == "aurora"
+    assert 'id="astrbot-classic-vars"' in html
+    assert "--classic-font-size: 30px" in html
 
 
 def test_webui_registers_all_page_routes(plugin, plugin_main) -> None:

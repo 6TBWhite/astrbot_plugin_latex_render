@@ -18,6 +18,7 @@ from ..template_system.service import TemplateService
 CODE_THEME_BY_SCENE = {
     "knowledge": "github-dark",
     "story": "docco",
+    "inspiration": "night-owl",
     "paper": "github",
     "custom": "night-owl",
 }

@@ -8,7 +8,7 @@
 
 ### 摘要
 
-Aurora 灵感卡从 `custom` 槽位转正为内置模板，承接原有的深色渐变卡片样式并继承 8 条排版滑条；`custom` 槽位重做为由报纸社论风起始稿构成的自由编辑模板，不再继承基础模板的 CSS variables。模板目录改为内置优先排序，未配置默认模板时保持 `classic` 不变。
+Aurora 灵感卡从 `custom` 槽位转正为内置模板，承接原有的深色渐变卡片样式并继承 8 条排版滑条；`custom` 槽位重做为由报纸社论风起始稿构成的自由编辑模板，不再继承基础模板的 CSS variables。模板目录改为内置优先排序，未配置默认模板时保持 `classic` 不变。同时调整 WebUI 工作台交互与布局：移除冗余预览按钮、Custom 一键恢复默认、统一画布尺寸并修复 Aurora 滑条。
 
 ### 模板变更
 
@@ -17,9 +17,21 @@ Aurora 灵感卡从 `custom` 槽位转正为内置模板，承接原有的深色
 - `custom` 起始稿改为报纸社论风（米黄纸底、衬线字体、双线分隔标题），与 `classic`、`novel`、`paper`、`aurora` 在视觉上相互区分
 - 内置模板目录顺序改为按 `manifest.json` 声明排列、自定义模板排在最后；新增内置模板不会改变默认模板
 
+### 界面变更
+
+- Gallery 页删除“立即预览”按钮：滑条、内容与布局变化均已自动刷新预览，按钮已冗余
+- Custom 页“立即预览”改为“恢复默认”：确认后直接覆盖保存并刷新预览
+- 画廊布局：左侧模板选择器固定 290px，滑条栏固定 340px，预览画布占据剩余宽度；画布高度统一为 `clamp(700px, calc(100vh - 160px), 920px)`，Gallery 与 Custom 等高
+
 ### 行为修复
 
 - 修复 WebUI 中 custom 模板滑条无效：此前 custom 继承 classic 的 `css_variables`，画廊显示滑条，但模板 CSS 未引用对应变量，拖动无视觉效果；现 custom 不显示滑条，aurora 等使用变量的模板滑条正常生效
+- 修复 Aurora 灵感卡滑条不生效：`manifest.json` 中 aurora 条目补充 `base_template: classic`，classic 系列 CSS 变量正确注入模板
+
+### 内部调整
+
+- WebUI `bootstrap` 响应新增 `default_custom_html`，以 `templates/_starters/custom.default.html` 作为恢复默认的唯一内容源
+- 删除前端过期的硬编码 `starterTemplate()`，消除默认模板的第三份副本
 
 ### 兼容性
 
@@ -29,6 +41,7 @@ Aurora 灵感卡从 `custom` 槽位转正为内置模板，承接原有的深色
 ### 验证
 
 - 普通测试：127 passed，5 skipped（浏览器集成与真实 Chromium 用例按环境跳过）
+- WebUI、模板管理与代码高亮回归测试全部通过；`bootstrap` 返回的 `default_custom_html` 与磁盘默认文件一致；aurora 样式覆盖注入 `--classic-font-size: 30px` 生效
 
 ---
 

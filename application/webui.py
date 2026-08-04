@@ -137,6 +137,7 @@ class WebUIController:
                 "config_fields": self.config.web_payload(self.templates.available()),
                 "templates": self.template_payload(),
                 "preview_content": TemplateManager.get_default_test_content(),
+                "default_custom_html": self.templates.manager._load_custom_starter(),
                 "status": self.diagnostics.safe_status(),
             }
         )

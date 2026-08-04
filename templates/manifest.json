@@ -24,6 +24,7 @@
       "display_name": "Aurora 灵感卡",
       "description": "深色渐变卡片，适合灵感记录、摘要与展示，支持排版滑条微调。",
       "scene": "inspiration",
+      "base_template": "classic",
       "thumbnail": "dynamic",
       "tags": ["深色卡片", "灵感记录", "渐变"],
       "preferred_width": 600,

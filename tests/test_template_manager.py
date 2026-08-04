@@ -113,7 +113,7 @@ def test_single_custom_slot_is_created_once_without_overwriting_edits(tmp_path) 
         "<main class='classic'>{{content}}</main>",
         encoding="utf-8",
     )
-    (starter_dir / "custom.html").write_text(
+    (starter_dir / "custom.default.html").write_text(
         "<main class='aurora'>{{content}}</main>",
         encoding="utf-8",
     )
@@ -146,7 +146,7 @@ def test_legacy_classic_custom_is_upgraded_without_touching_user_edits(
     classic = "<main class='classic'>{{content}}</main>"
     aurora = "<main class='aurora'>{{content}}</main>"
     (builtin_dir / "classic.html").write_text(classic, encoding="utf-8")
-    (starter_dir / "custom.html").write_text(aurora, encoding="utf-8")
+    (starter_dir / "custom.default.html").write_text(aurora, encoding="utf-8")
     manager = TemplateManager(str(builtin_dir), str(custom_dir))
 
     manager.save_custom_template("custom", classic, base_template="classic")
