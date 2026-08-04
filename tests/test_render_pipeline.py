@@ -60,6 +60,14 @@ def test_render_pipeline_applies_markdown_mathjax_and_template(
     assert captured["page_number_bottom_margin"] == 24
 
 
+def test_mathjax_delimiters_survive_js_escaping(plugin) -> None:
+    html = plugin.assets.inject_math(
+        "<!DOCTYPE html><html><head></head><body></body></html>"
+    )
+    assert r"inlineMath:[['$','$'],['\\('" in html
+    assert r"displayMath:[['$$','$$'],['\\['" in html
+
+
 def test_regular_template_keeps_configured_render_width(
     plugin, plugin_main, monkeypatch
 ) -> None:

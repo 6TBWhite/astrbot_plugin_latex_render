@@ -242,7 +242,7 @@ mjx-container,mjx-container *{word-break:normal!important;overflow-wrap:normal!i
 </style>
 <script>
 window.__ASTR_MATH_READY__=false;
-window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams','noerrors','noundefined']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']},startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{window.__ASTR_MATH_READY__=true;})}};
+window.MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],['\\\\[','\\\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams','noerrors','noundefined']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']},startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{window.__ASTR_MATH_READY__=true;})}};
 </script>
 """
             + loader
