@@ -5,6 +5,27 @@ from typing import Any
 
 
 @dataclass
+class RenderOptions:
+    """Browser capture options shared by the renderer phases."""
+
+    html_content: str
+    output_image_path: str
+    scale: int = 2
+    width: int = 600
+    is_gif: bool = False
+    duration: float = 3.0
+    fps: int = 15
+    layout: str = "auto"
+    max_page_height: int = 3200
+    max_pages: int = 8
+    max_output_bytes: int = 6 * 1024 * 1024
+    show_page_numbers: bool = True
+    page_number_bottom_margin: int = 20
+    allow_remote_assets: bool = False
+    fixed_page_size: dict | None = None
+
+
+@dataclass
 class BrowserRenderResult:
     """Low-level Chromium rendering result."""
 

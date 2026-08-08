@@ -332,7 +332,8 @@ def _parse_markdown_table(lines: List[str]) -> str:
     body_rows = [parse_row(line) for line in lines[2:]]
 
     html = [
-        '<table style="border-collapse:collapse;width:100%;margin:1em 0;font-size:14px;">'
+        '<table style="border-collapse:collapse;width:100%;margin:1em 0;'
+        'font-size:var(--astr-table-font-size,14px);">'
     ]
 
     html.append("<thead><tr>")

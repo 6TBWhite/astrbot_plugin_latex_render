@@ -363,10 +363,11 @@ def test_agent_tool_sends_all_rendered_pages(
     plugin.pipeline.render_for_layout.assert_awaited_once_with(
         "\n\n".join(f"段落 {i}" for i in range(100)),
         "classic",
-        "user-1",
-        False,
-        "auto",
-    )
+            "user-1",
+            False,
+            "auto",
+            font_scale=1.0,
+        )
 
 
 def test_agent_tool_reports_exact_failed_page(

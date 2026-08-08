@@ -1,7 +1,6 @@
+import asyncio
 import importlib
 from pathlib import Path
-
-import pytest
 
 
 class FakeInstallProcess:
@@ -11,8 +10,7 @@ class FakeInstallProcess:
         return b"", b""
 
 
-@pytest.mark.asyncio
-async def test_ensure_playwright_skips_install_for_expected_executable(
+def test_ensure_playwright_skips_install_for_expected_executable(
     plugin, plugin_main, monkeypatch, tmp_path
 ) -> None:
     browser_dir = tmp_path / "chromium_headless_shell-current"
@@ -33,11 +31,10 @@ async def test_ensure_playwright_skips_install_for_expected_executable(
         runtime_module.asyncio, "create_subprocess_exec", unexpected_install
     )
 
-    await plugin.browser.ensure_installed()
+    asyncio.run(plugin.browser.ensure_installed())
 
 
-@pytest.mark.asyncio
-async def test_ensure_playwright_installs_when_only_stale_revision_exists(
+def test_ensure_playwright_installs_when_only_stale_revision_exists(
     plugin, plugin_main, monkeypatch, tmp_path
 ) -> None:
     browsers_dir = tmp_path / "playwright_browsers"
@@ -65,7 +62,7 @@ async def test_ensure_playwright_installs_when_only_stale_revision_exists(
     )
     monkeypatch.setattr(runtime_module.asyncio, "create_subprocess_exec", install)
 
-    await plugin.browser.ensure_installed()
+    asyncio.run(plugin.browser.ensure_installed())
 
     assert len(calls) == 1
     assert calls[0][1:] == (

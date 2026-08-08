@@ -7,10 +7,37 @@ import os
 
 from astrbot.api import logger
 
-from ..config import CLASSIC_STYLE_VARS, PAPER_STYLE_VARS, RenderConfig
+from ..config import (
+    CLASSIC_STYLE_VARS,
+    PAPER_STYLE_VARS,
+    STYLE_CONTROL_SPECS,
+    RenderConfig,
+)
 from ..rendering.text import markdown_to_html, nl2br, preserve_newlines
 from .guidance import TemplateGuidanceBuilder
 from .manager import TemplateManager
+
+
+_FONT_KEYS_BY_FAMILY = {
+    "classic": {
+        "classic_font_size",
+        "classic_h1_size",
+        "classic_h2_size",
+        "classic_h3_size",
+    },
+    "paper": {
+        "paper_font_size",
+        "paper_h1_size",
+        "paper_h2_size",
+        "paper_h3_size",
+    },
+}
+_NOVEL_FONT_VARS = (
+    ("--novel-font-size", 18.0, 12.0, 27.0),
+    ("--novel-h1-size", 24.0, 18.0, 36.0),
+    ("--novel-h2-size", 18.0, 13.5, 27.0),
+    ("--novel-h3-size", 18.0, 13.5, 27.0),
+)
 
 
 class TemplateService:
@@ -159,8 +186,12 @@ class TemplateService:
         html: str,
         template_name: str,
         overrides: dict | None = None,
+        font_scale: float = 1.0,
     ) -> str:
         lines = []
+        metadata = self.manager.get_template_metadata(template_name)
+        family = str(metadata.get("base_template", template_name) or template_name)
+        font_keys = _FONT_KEYS_BY_FAMILY.get(family, set())
         for config_key, variable_name, unit in self.style_definitions(template_name):
             value = (
                 overrides.get(config_key)
@@ -170,10 +201,35 @@ class TemplateService:
             if value is None:
                 continue
             try:
-                float(value)
+                numeric = float(value)
             except (TypeError, ValueError):
                 continue
+            if config_key in font_keys and font_scale != 1.0:
+                spec = STYLE_CONTROL_SPECS[config_key]
+                numeric = max(
+                    float(spec["min"]),
+                    min(numeric * font_scale, float(spec["max"])),
+                )
+                value = self._css_number(numeric)
             lines.append(f"    {variable_name}: {value}{unit};")
+        if metadata.get("source") == "builtin" and template_name == "novel":
+            for variable_name, base, minimum, maximum in _NOVEL_FONT_VARS:
+                value = max(minimum, min(base * font_scale, maximum))
+                lines.append(f"    {variable_name}: {self._css_number(value)}px;")
+        if metadata.get("source") == "builtin":
+            table_size = max(10.5, min(14.0 * font_scale, 21.0))
+            lines.append(
+                f"    --astr-table-font-size: {self._css_number(table_size)}px;"
+            )
+            if template_name == "paper":
+                lines.append(
+                    f"    --paper-small-font-size: {self._css_number(table_size)}px;"
+                )
+                heading_size = max(12.0, min(16.0 * font_scale, 24.0))
+                lines.append(
+                    "    --paper-small-heading-size: "
+                    f"{self._css_number(heading_size)}px;"
+                )
         if not lines:
             return html
         block = (
@@ -188,6 +244,12 @@ class TemplateService:
             else block + "\n" + html
         )
 
+    @staticmethod
+    def _css_number(value: float) -> str:
+        if float(value).is_integer():
+            return str(int(value))
+        return f"{value:.3f}".rstrip("0").rstrip(".")
+
     def apply(
         self,
         content: str,
@@ -196,6 +258,7 @@ class TemplateService:
         *,
         style_overrides: dict | None = None,
         template_html_override: str | None = None,
+        font_scale: float = 1.0,
     ) -> str:
         template = (
             template_html_override
@@ -204,14 +267,23 @@ class TemplateService:
         )
         if is_raw_html:
             return self.inject_style_vars(
-                template.replace("{{content}}", content), template_name, style_overrides
+                template.replace("{{content}}", content),
+                template_name,
+                style_overrides,
+                font_scale,
             )
         if self.config.boolean("enable_markdown", True):
             content = markdown_to_html(content, safe=True)
             return self.inject_style_vars(
-                template.replace("{{content}}", content), template_name, style_overrides
+                template.replace("{{content}}", content),
+                template_name,
+                style_overrides,
+                font_scale,
             )
         content = nl2br(preserve_newlines(html_lib.escape(content, quote=False)))
         return self.inject_style_vars(
-            template.replace("{{content}}", content), template_name, style_overrides
+            template.replace("{{content}}", content),
+            template_name,
+            style_overrides,
+            font_scale,
         )

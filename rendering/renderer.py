@@ -1,89 +1,70 @@
-# renderer.py
-# HTML → 图片渲染（Playwright），支持静态 PNG 与 GIF 动画（时间轴跳帧）
-# 使用浏览器实例池避免重复启动 Chromium
+"""Coordinate browser lifecycle, page preparation, capture, and post-processing."""
 
 import asyncio
-import io
-import json
-import os
 import time
-from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
 
 from astrbot.api import logger
 
-from .models import BrowserRenderResult
+from .capture import (
+    _calculate_page_slices,
+    _capture_paginated_images,
+    _collect_pagination_blocks,
+    _detect_css_animated_region,
+    _detect_pixel_animated_region,
+    _get_animation_duration,
+    _group_pagination_blocks,
+    _inject_page_containers,
+    _measure_page_content_height,
+    _pack_into_pages,
+    _page_output_path,
+    _plan_page_capture,
+    _record_gif_animation,
+    _resolve_static_layout,
+    _should_keep_with_next,
+    render_gif_images,
+    render_static_images,
+)
+from .math_quality import MathQualityError
+from .models import BrowserRenderResult, RenderOptions
+from .page_prepare import (
+    CAPTURE_BOTTOM_PADDING,
+    _get_font_mime,
+    _handle_font_route,
+    _install_font_routes,
+    _install_network_policy,
+    _load_font_manifest,
+    _measure_capture_height,
+    _prepare_page_for_capture,
+    _stabilize_layout,
+    prepare_page,
+)
+from .postprocess import (
+    PIL_AVAILABLE,
+    _add_continuation_marker,
+    _add_page_number,
+    _cleanup_output_family,
+    _enforce_image_budget,
+    _load_page_number_font,
+    _pad_fixed_canvas,
+    _page_number_color,
+    _page_number_font_size,
+    _page_number_position,
+)
 
-# ==================== 本地字体映射 ====================
-
-_PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_ASSETS_DIR = os.path.join(_PLUGIN_ROOT, "assets")
-_FONT_MANIFEST: Dict[str, str] = {}  # URL -> 本地绝对路径
-_FONT_MANIFEST_LOADED = False
-
-
-def _load_font_manifest():
-    """加载字体清单（URL -> 本地文件路径映射）"""
-    global _FONT_MANIFEST, _FONT_MANIFEST_LOADED
-    if _FONT_MANIFEST_LOADED:
-        return
-
-    manifest_path = os.path.join(_ASSETS_DIR, "fonts", "manifest.json")
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            # 转换为绝对路径
-            for url, rel_path in raw.items():
-                abs_path = os.path.join(_ASSETS_DIR, rel_path)
-                if os.path.exists(abs_path):
-                    _FONT_MANIFEST[url] = abs_path
-            logger.info(f"[HTML渲染] 已加载 {len(_FONT_MANIFEST)} 个本地字体映射")
-        except Exception as e:
-            logger.warning(f"[HTML渲染] 加载字体清单失败: {e}")
-    else:
-        logger.debug(
-            "[HTML渲染] 未找到字体清单 assets/fonts/manifest.json，将使用系统字体"
-        )
-
-    _FONT_MANIFEST_LOADED = True
-
-
-def _get_font_mime(path: str) -> str:
-    """根据文件扩展名返回 MIME 类型"""
-    ext = os.path.splitext(path)[1].lower()
-    return {
-        ".woff2": "font/woff2",
-        ".woff": "font/woff",
-        ".ttf": "font/ttf",
-        ".otf": "font/otf",
-    }.get(ext, "application/octet-stream")
-
-
-# GIF 合成支持
-try:
-    from PIL import Image as PILImage, ImageChops, ImageDraw, ImageFont, ImageStat
-
-    GIF_AVAILABLE = True
-except ImportError:
-    GIF_AVAILABLE = False
-    logger.warning(
-        "HTML渲染插件: Pillow 未安装，GIF 动画功能将不可用。"
-        "可通过 pip install Pillow 安装。"
-    )
-
-# ==================== 浏览器实例池 ====================
+_CAPTURE_BOTTOM_PADDING = CAPTURE_BOTTOM_PADDING
+GIF_AVAILABLE = PIL_AVAILABLE
 
 _playwright_instance = None
 _browser_instance = None
 _browser_lock = asyncio.Lock()
-_CAPTURE_BOTTOM_PADDING = 24
 _last_browser_error = ""
 _last_render_seconds = 0.0
 
 
-async def init_browser():
-    """初始化浏览器实例（插件启动时调用）"""
+async def init_browser() -> None:
+    """Initialize the reusable browser instance."""
+
     global _playwright_instance, _browser_instance
     async with _browser_lock:
         if _browser_instance is not None:
@@ -105,7 +86,7 @@ async def init_browser():
                 _playwright_instance = await async_playwright().start()
             _browser_instance = await _playwright_instance.chromium.launch()
             logger.info("[HTML渲染] 浏览器实例已启动（复用模式）")
-        except Exception as e:
+        except Exception as exc:
             if _playwright_instance is not None:
                 try:
                     await _playwright_instance.stop()
@@ -113,11 +94,12 @@ async def init_browser():
                     pass
             _playwright_instance = None
             _browser_instance = None
-            raise RuntimeError(f"Playwright 浏览器实例启动失败: {e}") from e
+            raise RuntimeError(f"Playwright 浏览器实例启动失败: {exc}") from exc
 
 
-async def close_browser():
-    """关闭浏览器实例（插件停止时调用）"""
+async def close_browser() -> None:
+    """Close the reusable browser instance."""
+
     global _playwright_instance, _browser_instance
     async with _browser_lock:
         if _browser_instance is not None:
@@ -136,567 +118,17 @@ async def close_browser():
 
 
 async def _get_browser():
-    """获取浏览器实例，若不存在则自动创建"""
+    """Return the reusable browser, creating it when needed."""
+
     global _browser_instance
     if _browser_instance is None or not _browser_instance.is_connected():
         await init_browser()
     return _browser_instance
 
 
-# ==================== 动画区域检测 ====================
-
-
-async def _measure_capture_height(page) -> int:
-    """Measure a conservative capture height so the last line is not clipped."""
-    height = await page.evaluate(
-        f"""() => {{
-            const docEl = document.documentElement;
-            const body = document.body;
-            const heights = [
-                docEl ? docEl.scrollHeight : 0,
-                docEl ? docEl.offsetHeight : 0,
-                docEl ? docEl.clientHeight : 0,
-                body ? body.scrollHeight : 0,
-                body ? body.offsetHeight : 0,
-                body ? body.clientHeight : 0,
-            ];
-
-            let maxBottom = 0;
-            for (const el of document.querySelectorAll('*')) {{
-                const rect = el.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) continue;
-                const bottom = rect.bottom + window.scrollY;
-                if (bottom > maxBottom) {{
-                    maxBottom = bottom;
-                }}
-            }}
-
-            return Math.max(...heights, Math.ceil(maxBottom + {_CAPTURE_BOTTOM_PADDING}));
-        }}"""
-    )
-    return max(int(height), 200)
-
-
-async def _stabilize_layout(page, rounds: int = 3) -> int:
-    """
-    Wait for fonts/layout to settle and return a capture height.
-    Re-checking a few times avoids late bottom reflow.
-    """
-    stable_height = 200
-
-    for _ in range(rounds):
-        await page.evaluate(
-            """() => {
-                const mathScript = document.getElementById('astrbot-mathjax-script');
-                if (!mathScript || window.__ASTR_MATH_READY__) {
-                    return Promise.resolve();
-                }
-                return new Promise(resolve => {
-                    const started = Date.now();
-                    const tick = () => {
-                        if (window.__ASTR_MATH_READY__ || Date.now() - started > 15000) {
-                            resolve();
-                            return;
-                        }
-                        setTimeout(tick, 50);
-                    };
-                    tick();
-                });
-            }"""
-        )
-        await page.evaluate(
-            """() => {
-                const loader = document.querySelector('[data-astrbot-code-highlight-loader]');
-                if (!loader || window.__ASTR_CODE_HIGHLIGHT_READY__) {
-                    return Promise.resolve();
-                }
-                return new Promise(resolve => {
-                    const started = Date.now();
-                    const tick = () => {
-                        if (window.__ASTR_CODE_HIGHLIGHT_READY__) {
-                            resolve();
-                            return;
-                        }
-                        if (Date.now() - started > 3000) {
-                            window.__ASTR_CODE_HIGHLIGHT_READY__ = true;
-                            resolve();
-                            return;
-                        }
-                        setTimeout(tick, 25);
-                    };
-                    tick();
-                });
-            }"""
-        )
-        await page.evaluate(
-            """() => {
-                if (!document.fonts || !document.fonts.ready) {
-                    return Promise.resolve();
-                }
-                return document.fonts.ready.catch(() => {});
-            }"""
-        )
-        await page.evaluate(
-            "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
-        )
-        stable_height = await _measure_capture_height(page)
-        await asyncio.sleep(0.05)
-
-    return stable_height
-
-
-async def _prepare_page_for_capture(page, width: int) -> int:
-    """Resize the viewport to the measured content height, then verify once more."""
-    full_height = await _stabilize_layout(page)
-    await page.set_viewport_size({"width": width, "height": full_height})
-    return await _stabilize_layout(page)
-
-
-async def _install_network_policy(page, allow_remote_assets: bool = False) -> None:
-    """Keep rendering offline unless an administrator explicitly opts in."""
-
-    async def _route(route):
-        url = route.request.url
-        scheme = url.split(":", 1)[0].lower() if ":" in url else ""
-        if scheme in {"data", "blob", "about"}:
-            await route.continue_()
-            return
-        if allow_remote_assets and scheme in {"http", "https"}:
-            await route.continue_()
-            return
-        await route.abort()
-
-    await page.route("**/*", _route)
-
-
-_HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-
-
-def _should_keep_with_next(current: dict, following: dict) -> bool:
-    """Keep headings and short lead-ins with the block they introduce."""
-
-    current_tag = str(current.get("tag", "")).lower()
-    following_tag = str(following.get("tag", "")).lower()
-    if current_tag in _HEADING_TAGS:
-        return following_tag not in _HEADING_TAGS
-    if current_tag != "p" or not bool(following.get("keep_target", False)):
-        return False
-    return (
-        0 < int(current.get("text_length", 0)) <= 120
-        and int(current.get("height", 0)) <= 240
-    )
-
-
-def _group_pagination_blocks(blocks: list[dict]) -> list[dict]:
-    """Build atomic pagination groups without modifying the rendered DOM."""
-
-    groups: list[dict] = []
-    index = 0
-    while index < len(blocks):
-        first = blocks[index]
-        last_index = index
-        while last_index + 1 < len(blocks) and _should_keep_with_next(
-            blocks[last_index], blocks[last_index + 1]
-        ):
-            last_index += 1
-        last = blocks[last_index]
-        groups.append(
-            {
-                "top": int(first["top"]),
-                "bottom": int(last["bottom"]),
-                "breakable": str(last.get("tag", "")).lower() not in _HEADING_TAGS,
-                "block_indexes": list(range(index, last_index + 1)),
-            }
-        )
-        index = last_index + 1
-    return groups
-
-
-async def _collect_pagination_blocks(page) -> list[dict]:
-    """Measure the geometry of direct children of the content container."""
-
-    return await page.evaluate(
-        """() => {
-            const root = document.querySelector('.content') || document.body;
-            if (!root) return [];
-            const children = Array.from(root.children);
-            return children.map((el) => {
-                const rect = el.getBoundingClientRect();
-                return {
-                    top: Math.max(0, Math.floor(rect.top + window.scrollY)),
-                    bottom: Math.max(0, Math.ceil(rect.bottom + window.scrollY)),
-                    tag: el.tagName.toLowerCase(),
-                    height: Math.max(0, Math.ceil(rect.height)),
-                    text_length: (el.textContent || "").replace(/\\s+/g, " ").trim().length,
-                    keep_target: (
-                        ["pre", "table", "ul", "ol", "blockquote", "figure"].includes(
-                            el.tagName.toLowerCase()
-                        )
-                        || el.classList.contains("astr-math-block")
-                        || Boolean(el.querySelector('mjx-container[display="true"]'))
-                    ),
-                };
-            }).filter(item => item.bottom > item.top);
-        }"""
-    )
-
-
-def _pack_into_pages(
-    groups: list[dict], page_height: int, max_pages: int
-) -> tuple[list[list[int]], set[int]]:
-    """Pack atomic groups into fixed-height pages; return per-page block indexes."""
-
-    pages: list[list[int]] = []
-    hard_pages: set[int] = set()
-    page_top: int | None = None
-    current: list[int] | None = None
-    for group in groups:
-        top = int(group["top"])
-        bottom = int(group["bottom"])
-        if current is None:
-            page_top = top
-            current = []
-        if bottom - page_top <= page_height:
-            current.extend(group["block_indexes"])
-        else:
-            pages.append(current)
-            page_top = top
-            current = list(group["block_indexes"])
-            if bottom - top > page_height:
-                hard_pages.add(len(pages))
-    if current is not None:
-        pages.append(current)
-    if len(pages) > max_pages:
-        raise ValueError(f"分页结果为 {len(pages)} 页，超过最多 {max_pages} 页")
-    return pages, hard_pages
-
-
-async def _measure_page_content_height(page, page_height: int) -> int:
-    """Return the usable content height of a fixed-height page container."""
-
-    chrome = await page.evaluate(
-        """() => {
-            const root = document.querySelector('.content');
-            if (!root) return 0;
-            const cs = getComputedStyle(root.parentElement);
-            return (
-                parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) +
-                parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
-            );
-        }"""
-    )
-    return max(400, int(page_height) - int(chrome or 0))
-
-
-async def _inject_page_containers(
-    page,
-    page_block_indexes: list[list[int]],
-    page_height: int,
-) -> list[tuple[int, int]]:
-    """Move blocks into cloned fixed-height page containers; return page geometry."""
-
-    result = await page.evaluate(
-        """([assignments, pageHeight]) => {
-            const root = document.querySelector('.content');
-            if (!root || root.dataset.paginationDone) return null;
-            root.dataset.paginationDone = '1';
-            const children = Array.from(root.children);
-            const pageTpl = root.parentElement;
-            const container = pageTpl.parentElement;
-            assignments.forEach((blockIndexes, pi) => {
-                let pageEl = pageTpl;
-                if (pi > 0) {
-                    pageEl = pageTpl.cloneNode(true);
-                    const contentEl = pageEl.querySelector('.content');
-                    while (contentEl.firstChild) {
-                        contentEl.removeChild(contentEl.firstChild);
-                    }
-                    container.appendChild(pageEl);
-                }
-                const contentEl = pageEl.querySelector('.content');
-                for (const bi of blockIndexes) {
-                    contentEl.appendChild(children[bi]);
-                }
-                pageEl.style.height = pageHeight + 'px';
-                pageEl.style.overflow = 'hidden';
-                pageEl.style.boxShadow = 'none';
-            });
-            const pages = Array.from(container.children).filter(
-                (el) => el.classList.contains('page') || el.classList.contains('aurora-card')
-            );
-            return pages.map((el) => {
-                const r = el.getBoundingClientRect();
-                return [Math.round(r.top + window.scrollY), Math.round(r.bottom + window.scrollY)];
-            });
-        }""",
-        [page_block_indexes, page_height],
-    )
-    if result is None:
-        raise RuntimeError("分页容器注入失败")
-    return [(int(top), int(bottom)) for top, bottom in result]
-
-
-async def _calculate_page_slices(
-    page,
-    full_height: int,
-    max_page_height: int,
-    max_pages: int,
-) -> tuple[list[tuple[int, int]], set[int]]:
-    """Find page breaks near semantic block boundaries."""
-
-    if full_height <= max_page_height:
-        return [(0, full_height)], set()
-
-    if full_height > max_page_height * max_pages:
-        raise ValueError(
-            f"页面高度 {full_height}px 超过分页上限 "
-            f"{max_page_height * max_pages}px（最多 {max_pages} 页）"
-        )
-
-    blocks = await _collect_pagination_blocks(page)
-    groups = _group_pagination_blocks(blocks)
-
-    slices: list[tuple[int, int]] = []
-    hard_breaks: set[int] = set()
-    start = 0
-    minimum_fill = max(320, int(max_page_height * 0.45))
-    while start < full_height:
-        target = min(full_height, start + max_page_height)
-        if target >= full_height:
-            slices.append((start, full_height))
-            break
-
-        break_at = 0
-        for group in groups:
-            top = int(group["top"])
-            bottom = int(group["bottom"])
-            if (
-                bool(group.get("breakable", True))
-                and start + minimum_fill <= bottom <= target
-            ):
-                break_at = max(break_at, bottom)
-            elif (
-                not break_at
-                and start + minimum_fill <= top <= target
-                and bottom > target
-            ):
-                break_at = top
-
-        hard_split = break_at <= start
-        end = break_at if not hard_split else target
-        slices.append((start, end))
-        if hard_split:
-            hard_breaks.add(len(slices))
-        start = end
-
-    if len(slices) > max_pages:
-        raise ValueError(f"分页结果为 {len(slices)} 页，超过最多 {max_pages} 页")
-    return slices, hard_breaks
-
-
-def _page_number_font_size(scale: int) -> int:
-    return max(14, 14 * max(1, int(scale)))
-
-
-def _load_page_number_font(size: int):
-    candidates = (
-        "DejaVuSans.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-    )
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(candidate, size=size)
-        except OSError:
-            continue
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
-
-
-def _page_number_position(
-    image_size: tuple[int, int],
-    text_bbox: tuple[int, int, int, int],
-    scale: int,
-    bottom_margin: int = 20,
-) -> tuple[int, int]:
-    image_width, image_height = image_size
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
-    scaled_bottom_margin = max(1, int(bottom_margin)) * max(1, int(scale))
-    x = (image_width - text_width) // 2 - text_bbox[0]
-    y = image_height - scaled_bottom_margin - text_height - text_bbox[1]
-    return max(0, x), max(0, y)
-
-
-def _page_number_color(
-    image,
-    text_box: tuple[int, int, int, int],
-    scale: int,
-) -> tuple[int, int, int, int]:
-    padding = 4 * max(1, int(scale))
-    sample_box = (
-        max(0, text_box[0] - padding),
-        max(0, text_box[1] - padding),
-        min(image.width, text_box[2] + padding),
-        min(image.height, text_box[3] + padding),
-    )
-    luminance = ImageStat.Stat(image.crop(sample_box).convert("L")).mean[0]
-    if luminance >= 145:
-        return (42, 42, 42, 190)
-    return (246, 242, 232, 220)
-
-
-def _add_page_number(
-    path: str,
-    page_number: int,
-    page_count: int,
-    scale: int,
-    bottom_margin: int = 20,
-) -> None:
-    if not GIF_AVAILABLE or page_count <= 1:
-        return
-    try:
-        with PILImage.open(path) as source:
-            image = source.convert("RGB")
-            font = _load_page_number_font(_page_number_font_size(scale))
-            label = f"— {page_number} / {page_count} —"
-            measure = ImageDraw.Draw(image)
-            bbox = measure.textbbox((0, 0), label, font=font)
-            x, y = _page_number_position(
-                image.size, bbox, scale, bottom_margin=bottom_margin
-            )
-            text_box = (
-                x + bbox[0],
-                y + bbox[1],
-                x + bbox[2],
-                y + bbox[3],
-            )
-            color = _page_number_color(image, text_box, scale)
-            overlay = PILImage.new("RGBA", image.size, (0, 0, 0, 0))
-            ImageDraw.Draw(overlay).text((x, y), label, font=font, fill=color)
-            rendered = PILImage.alpha_composite(image.convert("RGBA"), overlay)
-            rendered.convert("RGB").save(path, "JPEG", quality=90, optimize=True)
-    except Exception as exc:
-        logger.warning(f"[HTML渲染] 添加页码失败: {exc}")
-
-
-def _add_continuation_marker(
-    path: str, continues_from_previous: bool, continues_to_next: bool
-) -> None:
-    if not GIF_AVAILABLE or not (continues_from_previous or continues_to_next):
-        return
-    try:
-        with PILImage.open(path) as source:
-            image = source.convert("RGB")
-            draw = ImageDraw.Draw(image)
-            if continues_from_previous:
-                draw.rounded_rectangle(
-                    (14, 12, 124, 36),
-                    radius=5,
-                    fill=(255, 255, 255),
-                    outline=(190, 190, 190),
-                )
-                draw.text((22, 18), "continued", fill=(80, 80, 80))
-            if continues_to_next:
-                y = max(12, image.height - 38)
-                draw.rounded_rectangle(
-                    (14, y, 132, y + 24),
-                    radius=5,
-                    fill=(255, 255, 255),
-                    outline=(190, 190, 190),
-                )
-                draw.text((22, y + 6), "continues...", fill=(80, 80, 80))
-            image.save(path, "JPEG", quality=90, optimize=True)
-    except Exception as exc:
-        logger.warning(f"[HTML渲染] 添加续页标记失败: {exc}")
-
-
-def _pad_fixed_canvas(
-    path: str,
-    page_width: int,
-    page_height: int,
-    top_margin: int,
-    scale: int,
-) -> None:
-    """Place a semantic page slice on a same-size white paper canvas."""
-
-    if not GIF_AVAILABLE:
-        raise ValueError("固定纸张分页需要 Pillow")
-    pixel_width = max(1, int(page_width * scale))
-    pixel_height = max(1, int(page_height * scale))
-    y = max(0, int(top_margin * scale))
-    with PILImage.open(path) as source:
-        slice_image = source.convert("RGB")
-        if slice_image.width != pixel_width:
-            ratio = pixel_width / max(1, slice_image.width)
-            slice_image = slice_image.resize(
-                (pixel_width, max(1, int(slice_image.height * ratio))),
-                PILImage.Resampling.LANCZOS,
-            )
-        available_height = max(1, pixel_height - y)
-        if slice_image.height > available_height:
-            slice_image = slice_image.crop((0, 0, slice_image.width, available_height))
-        canvas = PILImage.new("RGB", (pixel_width, pixel_height), "white")
-        canvas.paste(slice_image, (0, y))
-        canvas.save(path, "JPEG", quality=92, optimize=True)
-
-
-def _enforce_image_budget(path: str, max_output_bytes: int) -> str | None:
-    """Compress an oversized JPEG and report a warning when quality is reduced."""
-
-    if max_output_bytes <= 0 or not os.path.isfile(path):
-        return None
-    if os.path.getsize(path) <= max_output_bytes:
-        return None
-    if not GIF_AVAILABLE:
-        raise ValueError("图片超过体积上限，且 Pillow 不可用，无法自动压缩")
-
-    with PILImage.open(path) as source:
-        image = source.convert("RGB")
-        for quality in (84, 78, 72, 66, 60):
-            image.save(path, "JPEG", quality=quality, optimize=True)
-            if os.path.getsize(path) <= max_output_bytes:
-                return f"图片超过体积预算，已将 JPEG 质量调整为 {quality}"
-
-        while (
-            os.path.getsize(path) > max_output_bytes
-            and image.width > 480
-            and image.height > 480
-        ):
-            image = image.resize(
-                (max(1, int(image.width * 0.85)), max(1, int(image.height * 0.85))),
-                PILImage.Resampling.LANCZOS,
-            )
-            image.save(path, "JPEG", quality=66, optimize=True)
-
-    if os.path.getsize(path) > max_output_bytes:
-        raise ValueError(
-            f"图片压缩后仍有 {os.path.getsize(path)} 字节，超过上限 {max_output_bytes}"
-        )
-    return "图片超过体积预算，已自动降低分辨率"
-
-
-def _cleanup_output_family(output_image_path: str) -> None:
-    directory = os.path.dirname(output_image_path) or "."
-    base = os.path.splitext(os.path.basename(output_image_path))[0]
-    try:
-        for name in os.listdir(directory):
-            stem, extension = os.path.splitext(name)
-            if extension.lower() not in {".jpg", ".jpeg", ".gif", ".png"}:
-                continue
-            if stem == base or stem.startswith(f"{base}_p"):
-                try:
-                    os.remove(os.path.join(directory, name))
-                except OSError:
-                    pass
-    except OSError:
-        pass
-
-
 def get_renderer_status() -> dict:
+    """Return a diagnostics snapshot without mutating browser state."""
+
     connected = False
     if _browser_instance is not None:
         try:
@@ -710,143 +142,13 @@ def get_renderer_status() -> dict:
     }
 
 
-async def _detect_css_animated_region(
-    page,
-    viewport_width: int,
-    viewport_height: int,
-) -> tuple[bool, Optional[dict]]:
-    """Locate a CSS animation container; report whether the strategy decided."""
-
-    try:
-        bounds = await page.evaluate("""() => {
-            const allEls = document.querySelectorAll('*');
-            const animatedEls = [];
-            for (const el of allEls) {
-                const style = getComputedStyle(el);
-                if (style.animationName && style.animationName !== 'none') {
-                    animatedEls.push(el);
-                }
-            }
-            if (animatedEls.length === 0) return null;
-
-            let container = animatedEls[0].parentElement;
-            while (container && container !== document.body) {
-                const style = getComputedStyle(container);
-                if (style.overflow === 'hidden' || style.overflowX === 'hidden') {
-                    break;
-                }
-                container = container.parentElement;
-            }
-            if (!container || container === document.body) {
-                container = animatedEls[0].parentElement;
-            }
-
-            const rect = container.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) return null;
-
-            return {
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: rect.height
-            };
-        }""")
-        if not bounds:
-            return False, None
-
-        padding = 10
-        clip = {
-            "x": max(0, bounds["x"] - padding),
-            "y": max(0, bounds["y"] - padding),
-            "width": min(bounds["width"] + padding * 2, viewport_width),
-            "height": min(bounds["height"] + padding * 2, viewport_height),
-        }
-        ratio = clip["width"] * clip["height"] / (viewport_width * viewport_height)
-        if ratio > 0.8:
-            logger.info(f"[GIF] 动画容器占页面 {ratio * 100:.0f}%，不裁切")
-            return True, None
-
-        logger.info(
-            f"[GIF] JS定位动画容器: {clip['width']:.0f}×{clip['height']:.0f} CSS px "
-            f"(占比 {ratio * 100:.1f}%)"
-        )
-        return True, clip
-    except Exception as exc:
-        logger.warning(f"[GIF] JS定位失败: {exc}")
-        return False, None
-
-
-async def _detect_pixel_animated_region(
-    page,
-    scale: int,
-) -> Optional[dict]:
-    """Locate animation through a two-frame pixel comparison."""
-
-    try:
-        has_animations = await page.evaluate("document.getAnimations().length > 0")
-        if has_animations:
-            await page.evaluate("""() => {
-                document.getAnimations().forEach(a => {
-                    a.pause();
-                    a.currentTime = 0;
-                });
-            }""")
-            await asyncio.sleep(0.05)
-            raw_a = await page.screenshot(type="png")
-            shot_a = PILImage.open(io.BytesIO(raw_a)).convert("RGB")
-
-            await page.evaluate("""() => {
-                document.getAnimations().forEach(a => {
-                    a.currentTime = 2000;
-                });
-            }""")
-            await asyncio.sleep(0.05)
-            raw_b = await page.screenshot(type="png")
-            shot_b = PILImage.open(io.BytesIO(raw_b)).convert("RGB")
-
-            # 恢复播放
-            await page.evaluate("document.getAnimations().forEach(a => a.play())")
-
-            diff = ImageChops.difference(shot_a, shot_b).convert("L")
-            diff = diff.point(lambda p: 255 if p > 3 else 0)
-            bbox = diff.getbbox()
-
-            if bbox:
-                page_area = shot_a.width * shot_a.height
-                region_w = bbox[2] - bbox[0]
-                region_h = bbox[3] - bbox[1]
-                ratio = region_w * region_h / page_area
-
-                if ratio > 0.8:
-                    logger.info(f"[GIF] 像素变化区域占页面 {ratio * 100:.0f}%，不裁切")
-                    return None
-
-                pad = int(30 * scale)
-                clip = {
-                    "x": max(0, bbox[0] - pad) / scale,
-                    "y": max(0, bbox[1] - pad) / scale,
-                    "width": min(region_w + pad * 2, shot_a.width) / scale,
-                    "height": min(region_h + pad * 2, shot_a.height) / scale,
-                }
-                logger.info(
-                    f"[GIF] 像素对比定位: {clip['width']:.0f}×{clip['height']:.0f} CSS px"
-                )
-                return clip
-
-        logger.info("[GIF] 未检测到动画")
-        return None
-    except Exception as exc:
-        logger.warning(f"[GIF] 像素对比失败: {exc}")
-        return None
-
-
 async def _detect_animated_region(
     page,
     scale: int,
     viewport_width: int,
     viewport_height: int,
 ) -> Optional[dict]:
-    """Detect an animated crop, preferring CSS metadata over pixel comparison."""
+    """Compatibility wrapper retaining monkey-patchable detector hooks."""
 
     decided, clip = await _detect_css_animated_region(
         page, viewport_width, viewport_height
@@ -856,332 +158,16 @@ async def _detect_animated_region(
     return await _detect_pixel_animated_region(page, scale)
 
 
-async def _get_animation_duration(page) -> float:
-    """获取页面中最长动画的周期（毫秒）"""
-    try:
-        duration_ms = await page.evaluate("""() => {
-            const anims = document.getAnimations();
-            if (anims.length === 0) return 3000;
-            let maxDuration = 0;
-            for (const a of anims) {
-                const timing = a.effect.getComputedTiming();
-                const d = timing.duration || 0;
-                if (d > maxDuration) maxDuration = d;
-            }
-            return maxDuration || 3000;
-        }""")
-        return float(duration_ms)
-    except Exception:
-        return 3000.0
-
-
-# ==================== 主渲染函数 ====================
-
-
-@dataclass
-class RenderOptions:
-    """浏览器渲染参数集合。"""
-
-    html_content: str
-    output_image_path: str
-    scale: int = 2
-    width: int = 600
-    is_gif: bool = False
-    duration: float = 3.0
-    fps: int = 15
-    layout: str = "auto"
-    max_page_height: int = 3200
-    max_pages: int = 8
-    max_output_bytes: int = 6 * 1024 * 1024
-    show_page_numbers: bool = True
-    page_number_bottom_margin: int = 20
-    allow_remote_assets: bool = False
-    fixed_page_size: dict | None = None
-
-
-async def _handle_font_route(route) -> None:
-    """Serve a mapped local font or block the external request."""
-
-    url = route.request.url
-    local_path = _FONT_MANIFEST.get(url)
-    if local_path and os.path.exists(local_path):
-        try:
-            with open(local_path, "rb") as font_file:
-                body = font_file.read()
-            await route.fulfill(
-                status=200,
-                content_type=_get_font_mime(local_path),
-                body=body,
-            )
-            return
-        except Exception as exc:
-            logger.warning(f"[HTML渲染] 读取本地字体失败 {local_path}: {exc}")
-
-    await route.abort()
-
-
-async def _install_font_routes(page) -> None:
-    """Install deterministic local-only routes for Google Fonts assets."""
-
-    _load_font_manifest()
-    await page.route("**://fonts.gstatic.com/**", _handle_font_route)
-    await page.route("**://fonts.googleapis.com/**", lambda route: route.abort())
-
-
-def _resolve_static_layout(
-    options: RenderOptions, full_height: int
-) -> tuple[str, int, bool]:
-    """Normalize the layout and decide whether the page needs pagination."""
-
-    layout = str(options.layout or "auto").strip().lower()
-    if layout not in {"auto", "single", "paged"}:
-        layout = "auto"
-
-    page_height = options.max_page_height
-    if options.fixed_page_size:
-        layout = "paged"
-        page_height = int(options.fixed_page_size.get("content_height", page_height))
-    elif layout == "single" and full_height > page_height * options.max_pages:
-        raise ValueError(
-            f"单页高度 {full_height}px 超过绝对上限 {page_height * options.max_pages}px"
-        )
-
-    should_paginate = layout == "paged" or (
-        layout == "auto" and full_height > page_height
-    )
-    return layout, page_height, should_paginate
-
-
-async def _plan_page_capture(
-    page,
-    options: RenderOptions,
-    full_height: int,
-    page_height: int,
-) -> tuple[list[tuple[int, int]] | None, set[int]]:
-    """Build either clip windows or DOM page containers for page capture."""
-
-    if options.fixed_page_size:
-        page_windows, hard_breaks = await _calculate_page_slices(
-            page,
-            full_height,
-            max(400, int(page_height)),
-            max(1, int(options.max_pages)),
-        )
-        return page_windows, hard_breaks
-
-    blocks = await _collect_pagination_blocks(page)
-    groups = _group_pagination_blocks(blocks)
-    usable_height = await _measure_page_content_height(page, int(page_height))
-    usable_height = max(400, usable_height - _CAPTURE_BOTTOM_PADDING)
-    page_block_indexes, hard_pages = _pack_into_pages(
-        groups, usable_height, max(1, int(options.max_pages))
-    )
-    hard_breaks = {page_index + 1 for page_index in hard_pages}
-    if len(page_block_indexes) > 1:
-        await _inject_page_containers(page, page_block_indexes, int(page_height))
-        return None, hard_breaks
-    return [(0, full_height)], hard_breaks
-
-
-def _page_output_path(output_image_path: str, index: int) -> str:
-    """Keep the legacy page naming scheme used by existing consumers."""
-
-    base, extension = os.path.splitext(output_image_path)
-    extension = extension or ".jpg"
-    return output_image_path if index == 1 else f"{base}_p{index}{extension}"
-
-
-async def _capture_paginated_images(
-    page,
-    options: RenderOptions,
-    full_height: int,
-    page_height: int,
-) -> list[str]:
-    """Capture and post-process all pages for a paginated render."""
-
-    page_windows, hard_breaks = await _plan_page_capture(
-        page, options, full_height, page_height
-    )
-    page_count = (
-        len(page_windows)
-        if page_windows is not None
-        else await page.locator(".page, .aurora-card").count()
-    )
-    output_paths: list[str] = []
-    for index in range(page_count):
-        path = _page_output_path(options.output_image_path, index)
-        if page_windows is not None:
-            start, end = page_windows[index]
-            await page.screenshot(
-                path=path,
-                clip={
-                    "x": 0,
-                    "y": start,
-                    "width": options.width,
-                    "height": end - start,
-                },
-                type="jpeg",
-                quality=92,
-            )
-        else:
-            await (
-                page.locator(".page, .aurora-card")
-                .nth(index)
-                .screenshot(path=path, type="jpeg", quality=92)
-            )
-        output_paths.append(path)
-
-    if options.fixed_page_size:
-        for path in output_paths:
-            _pad_fixed_canvas(
-                path,
-                int(options.fixed_page_size.get("width", options.width)),
-                int(options.fixed_page_size.get("height", 1123)),
-                int(options.fixed_page_size.get("top_margin", 76)),
-                options.scale,
-            )
-
-    for index, path in enumerate(output_paths, start=1):
-        _add_continuation_marker(
-            path,
-            continues_from_previous=(index - 1) in hard_breaks,
-            continues_to_next=index in hard_breaks,
-        )
-    if options.show_page_numbers and len(output_paths) > 1:
-        for index, path in enumerate(output_paths, start=1):
-            _add_page_number(
-                path,
-                index,
-                len(output_paths),
-                options.scale,
-                bottom_margin=options.page_number_bottom_margin,
-            )
-    return output_paths
-
-
-async def _render_static_images(
-    page,
-    options: RenderOptions,
-    full_height: int,
-    started_at: float,
-) -> tuple[list[str], list[str]]:
-    """Render static output and enforce the configured image budget."""
-
-    _, page_height, should_paginate = _resolve_static_layout(options, full_height)
-    if should_paginate:
-        output_paths = await _capture_paginated_images(
-            page, options, full_height, page_height
-        )
-    else:
-        await page.screenshot(
-            path=options.output_image_path,
-            full_page=True,
-            type="jpeg",
-            quality=92,
-        )
-        output_paths = [options.output_image_path]
-
-    warnings: list[str] = []
-    for path in output_paths:
-        warning = _enforce_image_budget(path, options.max_output_bytes)
-        if warning and warning not in warnings:
-            warnings.append(warning)
-    logger.info(f"[性能] 静态渲染总耗时: {time.perf_counter() - started_at:.3f}s")
-    return output_paths, warnings
-
-
-async def _record_gif_animation(page, options: RenderOptions, clip: dict) -> str | None:
-    """Record the detected animation region by seeking the browser timeline."""
-
-    gif_path = os.path.splitext(options.output_image_path)[0] + ".gif"
-    animation_duration_ms = await _get_animation_duration(page)
-    record_duration_ms = min(options.duration * 1000, animation_duration_ms)
-    frame_count = max(int(record_duration_ms / 1000 * options.fps), 10)
-    frame_interval_ms = record_duration_ms / frame_count
-    logger.info(
-        f"[GIF] 时间轴跳帧模式：动画周期={animation_duration_ms:.0f}ms，"
-        f"录制={record_duration_ms:.0f}ms，{frame_count}帧，"
-        f"裁切={clip['width']:.0f}×{clip['height']:.0f}"
-    )
-
-    await page.evaluate("document.getAnimations().forEach(a => a.pause())")
-    frames = []
-    record_started_at = time.perf_counter()
-    for index in range(frame_count):
-        target_time = index * frame_interval_ms
-        await page.evaluate(
-            f"document.getAnimations().forEach(a => a.currentTime = {target_time})"
-        )
-        await asyncio.sleep(0.02)
-        frame_bytes = await page.screenshot(clip=clip, type="jpeg", quality=85)
-        frame = PILImage.open(io.BytesIO(frame_bytes)).convert("RGB")
-        frames.append(frame.convert("P", palette=PILImage.ADAPTIVE, colors=256))
-    await page.evaluate("document.getAnimations().forEach(a => a.play())")
-    logger.info(
-        f"[GIF] 跳帧完成：{len(frames)}帧，"
-        f"耗时{time.perf_counter() - record_started_at:.1f}s"
-    )
-
-    output_dir = os.path.dirname(options.output_image_path)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-    if not frames:
-        return None
-
-    compose_started_at = time.perf_counter()
-    frames[0].save(
-        gif_path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=int(frame_interval_ms),
-        loop=0,
-        optimize=True,
-    )
-    logger.info(f"[GIF] 合成完成，耗时{time.perf_counter() - compose_started_at:.1f}s")
-    return gif_path
-
-
-async def _render_gif_images(
-    page,
-    options: RenderOptions,
-    full_height: int,
-    started_at: float,
-) -> tuple[list[str], list[str]]:
-    """Render the full static image and an optional animated crop."""
-
-    if not GIF_AVAILABLE:
-        logger.warning("Pillow 未安装，回退到静态截图")
-        await page.screenshot(path=options.output_image_path, full_page=True)
-    else:
-        await page.screenshot(path=options.output_image_path, full_page=True)
-        logger.info("[GIF] 已生成静态全页截图")
-        clip = await _detect_animated_region(
-            page, options.scale, options.width, full_height
-        )
-        if clip:
-            await _record_gif_animation(page, options, clip)
-        else:
-            logger.info("[GIF] 未检测到动画区域，仅输出静态图")
-
-    logger.info(f"[性能] GIF渲染总耗时: {time.perf_counter() - started_at:.3f}s")
-    output_paths = []
-    if os.path.exists(options.output_image_path):
-        output_paths.append(options.output_image_path)
-    gif_path = os.path.splitext(options.output_image_path)[0] + ".gif"
-    if os.path.exists(gif_path):
-        output_paths.append(gif_path)
-    return output_paths, []
+_load_and_prepare_page = prepare_page
+_render_static_images = render_static_images
+_render_gif_images = render_gif_images
 
 
 async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResult:
-    """
-    使用 Playwright 将 HTML 内容渲染成图片。
-    复用浏览器实例，每次只创建新页面。
-    GIF 模式使用时间轴跳帧：暂停动画 → seek到每帧时间点 → 截图，零等待。
-    """
-    global _last_browser_error, _last_render_seconds
-    started_at = time.perf_counter()
+    """Render HTML by coordinating the prepare, capture, and post-process phases."""
 
+    global _browser_instance, _last_browser_error, _last_render_seconds
+    started_at = time.perf_counter()
     context = None
     try:
         browser = await _get_browser()
@@ -1209,8 +195,9 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
         await _install_font_routes(page)
 
         page_started_at = time.perf_counter()
-        await page.set_content(options.html_content, wait_until="domcontentloaded")
-        full_height = await _prepare_page_for_capture(page, options.width)
+        full_height, math_metrics = await prepare_page(
+            page, options.html_content, options.width
+        )
         content_ready_at = time.perf_counter()
         logger.debug(
             f"[性能] 页面创建: {page_started_at - started_at:.3f}s, "
@@ -1218,11 +205,11 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
         )
 
         if options.is_gif:
-            output_paths, warnings = await _render_gif_images(
+            output_paths, warnings = await render_gif_images(
                 page, options, full_height, started_at
             )
         else:
-            output_paths, warnings = await _render_static_images(
+            output_paths, warnings = await render_static_images(
                 page, options, full_height, started_at
             )
 
@@ -1237,38 +224,47 @@ async def html_to_image_playwright(options: RenderOptions) -> BrowserRenderResul
                 "page_count": len(output_paths),
                 "content_height": full_height,
                 "layout": options.layout,
+                **math_metrics,
             },
         )
-
     except asyncio.CancelledError:
         _cleanup_output_family(options.output_image_path)
         raise
-    except Exception as e:
-        logger.error(f"Playwright 渲染失败: {e}")
-        import traceback
+    except Exception as exc:
+        if isinstance(exc, MathQualityError):
+            logger.warning(f"[HTML渲染] 公式质量门禁未通过: {exc.message}")
+        else:
+            logger.error(f"Playwright 渲染失败: {exc}")
+            import traceback
 
-        logger.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
 
-        # 浏览器可能已崩溃，重置实例
-        global _browser_instance
-        _browser_instance = None
+        if not isinstance(exc, MathQualityError):
+            _browser_instance = None
         _cleanup_output_family(options.output_image_path)
-        _last_browser_error = str(e)
+        _last_browser_error = str(exc)
         _last_render_seconds = time.perf_counter() - started_at
-        error_code = (
-            "resource_limit"
-            if isinstance(e, ValueError) and ("上限" in str(e) or "超过" in str(e))
-            else "browser_error"
-        )
+        if isinstance(exc, MathQualityError):
+            error_code = exc.code
+            error_metrics = exc.metrics
+        elif isinstance(exc, ValueError) and (
+            "上限" in str(exc) or "超过" in str(exc)
+        ):
+            error_code = "resource_limit"
+            error_metrics = {}
+        else:
+            error_code = "browser_error"
+            error_metrics = {}
         return BrowserRenderResult(
             success=False,
             error_code=error_code,
-            error_message=str(e),
-            metrics={"duration_seconds": round(_last_render_seconds, 3)},
+            error_message=str(exc),
+            metrics={
+                "duration_seconds": round(_last_render_seconds, 3),
+                **error_metrics,
+            },
         )
-
     finally:
-        # 只关闭 context/page，不关闭浏览器
         if context is not None:
             try:
                 await context.close()
@@ -1287,22 +283,25 @@ async def _fallback_render(
     max_output_bytes: int = 6 * 1024 * 1024,
     allow_remote_assets: bool = False,
 ) -> BrowserRenderResult:
-    """回退到独立浏览器模式（浏览器池不可用时）"""
+    """Use an isolated browser when the shared pool is unavailable."""
+
     try:
         from playwright.async_api import async_playwright
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch()
             context = await browser.new_context(
                 device_scale_factor=scale,
                 viewport={"width": width, "height": 800},
             )
             page = await context.new_page()
             await _install_network_policy(page, allow_remote_assets)
-            await page.set_content(html_content, wait_until="domcontentloaded")
-            await _prepare_page_for_capture(page, width)
+            _, math_metrics = await prepare_page(page, html_content, width)
             await page.screenshot(
-                path=output_image_path, full_page=True, type="jpeg", quality=92
+                path=output_image_path,
+                full_page=True,
+                type="jpeg",
+                quality=92,
             )
             warning = _enforce_image_budget(output_image_path, max_output_bytes)
             await browser.close()
@@ -1311,12 +310,21 @@ async def _fallback_render(
                 success=True,
                 paths=[output_image_path],
                 warnings=[warning] if warning else [],
-                metrics={"fallback": True, "page_count": 1},
+                metrics={"fallback": True, "page_count": 1, **math_metrics},
             )
-    except Exception as e:
-        logger.error(f"[HTML渲染] 回退渲染也失败: {e}")
+    except MathQualityError as exc:
+        logger.warning(f"[HTML渲染] 回退渲染未通过公式质量门禁: {exc.message}")
+        _cleanup_output_family(output_image_path)
+        return BrowserRenderResult(
+            success=False,
+            error_code=exc.code,
+            error_message=exc.message,
+            metrics=exc.metrics,
+        )
+    except Exception as exc:
+        logger.error(f"[HTML渲染] 回退渲染也失败: {exc}")
         return BrowserRenderResult(
             success=False,
             error_code="browser_error",
-            error_message=str(e),
+            error_message=str(exc),
         )

@@ -10,15 +10,16 @@ import uuid
 from astrbot.api import logger
 from astrbot.api.message_components import Image
 
-from ..config import RenderConfig, normalize_layout
+from ..config import RenderConfig, normalize_font_scale, normalize_layout
 from .document import HtmlDocumentBuilder
 from .models import (
     BrowserRenderResult,
     RenderFailure,
+    RenderOptions,
     RenderResult,
     RenderRuntimeSnapshot,
 )
-from .renderer import RenderOptions, html_to_image_playwright
+from .renderer import html_to_image_playwright
 
 
 class RenderPipeline:
@@ -51,6 +52,7 @@ class RenderPipeline:
         layout: str | None = None,
         style_overrides: dict | None = None,
         template_html_override: str | None = None,
+        font_scale: float = 1.0,
     ) -> RenderResult:
         if not content or not content.strip():
             raise RenderFailure("invalid_content", "内容不能为空")
@@ -60,6 +62,10 @@ class RenderPipeline:
                 "resource_limit",
                 f"内容长度为 {len(content)} 字符，超过上限 {limit} 字符",
             )
+        try:
+            font_scale = normalize_font_scale(font_scale)
+        except ValueError as exc:
+            raise RenderFailure("invalid_style", str(exc)) from exc
         timeout = self.config.number("render_timeout_seconds", 30.0, 5.0, 180.0)
         semaphore = self._semaphore()
         max_queue = self.config.integer("max_queue_size", 8, 0, 100)
@@ -84,6 +90,7 @@ class RenderPipeline:
                     layout=layout,
                     style_overrides=style_overrides,
                     template_html_override=template_html_override,
+                    font_scale=font_scale,
                 ),
                 timeout=timeout,
             )
@@ -110,10 +117,21 @@ class RenderPipeline:
         user_id: str | None,
         is_gif: bool,
         layout: str,
+        *,
+        font_scale: float = 1.0,
     ) -> RenderResult:
         if layout == "auto":
-            return await self.render(content, template, user_id, is_gif)
-        return await self.render(content, template, user_id, is_gif, layout=layout)
+            return await self.render(
+                content, template, user_id, is_gif, font_scale=font_scale
+            )
+        return await self.render(
+            content,
+            template,
+            user_id,
+            is_gif,
+            layout=layout,
+            font_scale=font_scale,
+        )
 
     async def _render_inner(
         self,
@@ -125,6 +143,7 @@ class RenderPipeline:
         layout: str | None,
         style_overrides: dict | None,
         template_html_override: str | None,
+        font_scale: float,
     ) -> RenderResult:
         if time.monotonic() < self.browser_cooldown_until:
             remaining = int(self.browser_cooldown_until - time.monotonic()) + 1
@@ -137,13 +156,16 @@ class RenderPipeline:
             user_id,
             style_overrides,
             template_html_override,
+            font_scale,
         )
         logger.debug(f"HTML渲染: 使用模板 {template_name}, GIF模式: {is_gif}")
         options = self.build_options(
             html, metadata, is_gif, layout, style_overrides, trusted
         )
         normalized = await self.run_browser(options)
-        return self._finalize(normalized, template_name, options.layout)
+        return self._finalize(
+            normalized, template_name, options.layout, font_scale
+        )
 
     def build_options(
         self,
@@ -240,7 +262,11 @@ class RenderPipeline:
         return normalized
 
     def _finalize(
-        self, normalized: BrowserRenderResult, template_name: str, layout: str
+        self,
+        normalized: BrowserRenderResult,
+        template_name: str,
+        layout: str,
+        font_scale: float,
     ) -> RenderResult:
         self.browser_failure_count = 0
         self.browser_cooldown_until = 0.0
@@ -256,6 +282,7 @@ class RenderPipeline:
             **normalized.metrics,
             "template": template_name,
             "layout": layout,
+            "font_scale": font_scale,
             "image_count": len(images),
         }
         self.last_error = {}
@@ -352,6 +379,13 @@ class RenderPipeline:
             "invalid_content": "内容无效",
             "invalid_template": "模板无效",
             "invalid_layout": "布局无效",
+            "invalid_style": "样式无效",
+            "unsupported_font_scale": "模板不支持字号调整",
+            "math_load_failed": "公式引擎加载失败",
+            "math_timeout": "公式渲染超时",
+            "math_invalid": "公式内容错误",
+            "math_incomplete": "公式渲染不完整",
+            "math_overflow": "公式超出画布",
             "resource_limit": "资源超限",
             "queue_full": "队列已满",
             "timeout": "渲染超时",

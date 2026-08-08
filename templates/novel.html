@@ -47,7 +47,7 @@
         }
 
         .content {
-            font-size: 18px;
+            font-size: var(--novel-font-size, 18px);
             line-height: 2.0;
             color: #2b2b2b;
             text-align: justify;
@@ -87,7 +87,9 @@
             margin-top: 1.5em;
             margin-bottom: 1em;
         }
-        .content h1 { font-size: 24px; margin-top: 0; }
+        .content h1 { font-size: var(--novel-h1-size, 24px); margin-top: 0; }
+        .content h2 { font-size: var(--novel-h2-size, 18px); }
+        .content h3 { font-size: var(--novel-h3-size, 18px); }
         
         /* 引用块 */
         .content blockquote {

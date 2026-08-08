@@ -10,7 +10,10 @@ from PIL import Image as PILImage, ImageStat
 from astrbot_plugin_latex_render_under_test.template_system.manager import (
     TemplateManager,
 )
+from astrbot_plugin_latex_render_under_test.rendering.models import RenderFailure
 from astrbot_plugin_latex_render_under_test.rendering.renderer import (
+    _fallback_render,
+    _get_browser,
     close_browser,
     init_browser,
 )
@@ -55,7 +58,9 @@ def test_real_chromium_covers_user_command_and_agent_tool(
 
     assert len(command_results) == 1
     assert command_results[0].kind == "chain"
-    assert agent_results == ["图片已渲染并发送给用户。可对图片内容进行简要解说。"]
+    assert agent_results == [
+        "图片已渲染并发送给用户（font_scale=1）。可对图片内容进行简要解说。"
+    ]
     assert len(agent_event.sent) == 1
     assert len(probe_results) == 2
     assert probe_results[0].kind == "plain"
@@ -88,6 +93,144 @@ def test_real_chromium_covers_user_command_and_agent_tool(
         for image in probe_images
     }
     assert len(probe_hashes) >= 2
+
+
+def test_real_chromium_enforces_math_quality_gate(plugin, tmp_path) -> None:
+    valid = (
+        "行内公式 $a^2+b^2=c^2$\n\n"
+        "$$\\begin{aligned}f(x)&=x^2+1\\\\g(x)&=\\frac{x}{x+1}"
+        "\\end{aligned}$$\n\n"
+        "$$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}$$"
+    )
+    too_wide = " + ".join(f"x_{{{index}}}" for index in range(80))
+
+    async def exercise_gate():
+        try:
+            await init_browser()
+            accepted = await plugin.pipeline.render(valid, "classic")
+            failures = []
+            for source in (
+                r"$\frac{a}$",
+                r"$\notacommand{x}$",
+            ):
+                try:
+                    await plugin.pipeline.render(source, "classic")
+                except RenderFailure as exc:
+                    failures.append(exc)
+
+            plugin.config["trusted_html_mode"] = True
+            overflow_source = (
+                "<style>.astr-math-block{width:240px!important}"
+                ".astr-math-block svg{max-width:none!important}</style>"
+                f'<div class="astr-math-block">\\[{too_wide}\\]</div>'
+            )
+            try:
+                await plugin.pipeline.render(overflow_source, "classic")
+            except RenderFailure as exc:
+                failures.append(exc)
+            finally:
+                plugin.config["trusted_html_mode"] = False
+
+            fallback_html = plugin.assets.inject_math(
+                r'<html><head></head><body><span class="astr-math-inline">'
+                r'\(\notacommand{x}\)</span></body></html>'
+            )
+            fallback = await _fallback_render(
+                fallback_html,
+                str(tmp_path / "fallback-invalid.jpg"),
+                1,
+                600,
+                False,
+                0,
+                0,
+            )
+            bundled_mathjax = plugin.assets.mathjax_source
+            plugin.assets.mathjax_source = ""
+            load_failure = None
+            try:
+                await plugin.pipeline.render(r"$x^2$", "classic")
+            except RenderFailure as exc:
+                load_failure = exc
+            finally:
+                plugin.assets.mathjax_source = bundled_mathjax
+            plain = await plugin.pipeline.render("普通文本", "classic")
+            return accepted, failures, fallback, load_failure, plain
+        finally:
+            await close_browser()
+
+    accepted, failures, fallback, load_failure, plain = asyncio.run(exercise_gate())
+
+    assert accepted.metrics["math_count"] == 3
+    assert [failure.code for failure in failures] == [
+        "math_invalid",
+        "math_invalid",
+        "math_overflow",
+    ]
+    assert "第 1 个公式" in failures[0].message
+    assert "\\notacommand" in failures[1].message
+    assert not fallback.success
+    assert fallback.error_code == "math_invalid"
+    assert not (tmp_path / "fallback-invalid.jpg").exists()
+    assert load_failure.code == "math_load_failed"
+    assert plain.metrics["math_count"] == 0
+    assert plain.metrics["math_gate_seconds"] < 0.1
+
+
+def test_real_chromium_applies_font_scale_to_all_builtin_templates(plugin) -> None:
+    plugin.config.update(
+        {
+            "classic_font_size": 20,
+            "classic_h1_size": 30,
+            "classic_h2_size": 24,
+            "classic_h3_size": 20,
+            "paper_font_size": 16,
+            "paper_h1_size": 24,
+            "paper_h2_size": 20,
+            "paper_h3_size": 18,
+        }
+    )
+
+    async def computed_sizes(template: str, scale: float) -> tuple[float, float]:
+        _, _, html, _ = plugin.documents.build(
+            "# 标题\n\n正文", template, None, None, None, scale
+        )
+        browser = await _get_browser()
+        context = await browser.new_context(viewport={"width": 794, "height": 800})
+        try:
+            page = await context.new_page()
+            await page.set_content(html, wait_until="domcontentloaded")
+            values = await page.evaluate(
+                """() => {
+                    const content = document.querySelector('.content');
+                    const heading = content.querySelector('h1');
+                    return [
+                        parseFloat(getComputedStyle(content).fontSize),
+                        parseFloat(getComputedStyle(heading).fontSize),
+                    ];
+                }"""
+            )
+            return float(values[0]), float(values[1])
+        finally:
+            await context.close()
+
+    async def exercise_templates():
+        try:
+            await init_browser()
+            result = {}
+            for template in ("classic", "aurora", "novel", "paper"):
+                result[template] = (
+                    await computed_sizes(template, 1.0),
+                    await computed_sizes(template, 1.25),
+                )
+            return result
+        finally:
+            await close_browser()
+
+    results = asyncio.run(exercise_templates())
+
+    for normal, enlarged in results.values():
+        assert enlarged[0] == pytest.approx(normal[0] * 1.25, abs=0.02)
+        assert enlarged[1] == pytest.approx(normal[1] * 1.25, abs=0.02)
 
 
 def test_real_chromium_paginates_to_identical_a4_pages(plugin, plugin_main) -> None:

@@ -29,12 +29,18 @@ class HtmlDocumentBuilder:
         user_id: str | None,
         style_overrides: dict | None,
         template_html_override: str | None,
+        font_scale: float = 1.0,
     ) -> tuple[str, dict, str, bool]:
         try:
             template_name = self.templates.select(content, specified_template, user_id)
         except (ValueError, FileNotFoundError) as exc:
             raise RenderFailure("invalid_template", str(exc)) from exc
         metadata = self.templates.manager.get_template_metadata(template_name)
+        if font_scale != 1.0 and metadata.get("source") != "builtin":
+            raise RenderFailure(
+                "unsupported_font_scale",
+                "Custom 模板未声明字号缩放支持，请使用内置模板或保持 font_scale=1.0",
+            )
         trusted = self.config.boolean("trusted_html_mode")
         raw_html = trusted and bool(
             re.search(r"<(?:style|html)\b", content, re.IGNORECASE)
@@ -45,6 +51,7 @@ class HtmlDocumentBuilder:
             is_raw_html=raw_html,
             style_overrides=style_overrides,
             template_html_override=template_html_override,
+            font_scale=font_scale,
         )
         if not raw_html:
             html = self.assets.inject_code_highlight(

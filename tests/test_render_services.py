@@ -115,6 +115,31 @@ def test_pipeline_retries_only_browser_failures(tmp_path, monkeypatch) -> None:
     assert renderer.await_count == 2
 
 
+def test_pipeline_does_not_retry_math_quality_failures(tmp_path, monkeypatch) -> None:
+    _, _, _, pipeline = _services(tmp_path)
+    renderer = AsyncMock(
+        return_value=BrowserRenderResult(
+            False,
+            error_code="math_invalid",
+            error_message="第 1 个公式存在未知命令 \\foo",
+        )
+    )
+    monkeypatch.setattr(
+        "astrbot_plugin_latex_render_under_test.rendering.pipeline.html_to_image_playwright",
+        renderer,
+    )
+
+    with pytest.raises(RenderFailure) as caught:
+        asyncio.run(
+            pipeline.run_browser(
+                RenderOptions(html_content="<p>x</p>", output_image_path="render.jpg")
+            )
+        )
+
+    assert caught.value.code == "math_invalid"
+    assert renderer.await_count == 1
+
+
 def test_pipeline_rejects_oversized_input_before_browser(tmp_path) -> None:
     _, _, _, pipeline = _services(tmp_path, {"max_input_chars": 100})
 

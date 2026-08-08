@@ -28,7 +28,7 @@ LaTeX Render 给 AstrBot 增加 `latex_render_to_image` 与 `latex_render_templa
 
 插件不接管正常回复，也不依赖在线排版服务。MathJax 随插件离线提供，内置模板只使用宿主机字体；是否出图、写什么内容、选哪个模板，仍由当前 Agent 和用户指令决定。
 
-当前发布版本为 `1.3.1`，要求 AstrBot `>=4.26.3`。
+当前发布版本为 `1.3.2`，要求 AstrBot `>=4.26.3`。
 
 ## 核心能力
 
@@ -37,7 +37,8 @@ LaTeX Render 给 AstrBot 增加 `latex_render_to_image` 与 `latex_render_templa
 | LLM 工具调用    | Agent 可调用 `latex_render_template_guide` 按需查询模板，再用 `latex_render_to_image` 渲染并发送图片 | 不拦截普通消息，不自动把所有回复转为图片               |
 | Markdown 排版 | 通过 Mistune 处理标题、列表、引用、代码块、删除线和表格                                         | 可在 WebUI 中关闭                       |
 | 代码高亮与语言标识   | 显式标注语言的围栏代码块使用本地 Highlight.js 高亮、显示右上角语言名称，并按模板匹配主题                  | 可整体关闭；未知语言仅显示声明，不自动猜测，不处理行内代码或可信原始 HTML |
-| LaTeX 公式    | 识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和 `\begin{...}` / `\end{...}` 块 | 具体语法支持范围由插件附带的 MathJax 决定          |
+| LaTeX 公式    | 识别 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 和 `\begin{...}` / `\end{...}` 块 | 截图前验收 SVG；错误、未完成或溢出的公式会终止发送并返回公式序号 |
+| 单次字号调整     | Agent 可用 `font_scale=0.75–1.5` 同步缩放四个内置模板的正文、标题与表格                  | 仅本次生效；Custom 不强制改写 CSS，而是明确拒绝非默认倍率    |
 | 智能分页        | 超过页高预算后按顶层语义块装箱到固定高度页面，每张图片尺寸一致                                  | 公式、表格和代码块优先整体换页；极端超高单块会带续页标记       |
 | 内置模板        | 仓库提供 `classic`、`aurora`、`novel` 和固定 A4 `paper`                          | `templates/` 中至少需要一个可用模板           |
 | 渲染工作台       | 独立插件页面提供基础设置、模板画廊、实时滑条预览和自定义模板编辑                                         | 完整底层选项仍保留在 AstrBot 配置页             |
@@ -263,21 +264,24 @@ latex_render_template_guide(template="novel") # 指定模板的用途与内容�
 latex_render_to_image(
   content="## 勾股定理\n设两直角边为 $a$、$b$，斜边为 $c$：\n$$a^2+b^2=c^2$$",
   template="classic",
-  layout="auto"
+  layout="auto",
+  font_scale=1.15
 )
 ```
 
-| 参数         | 必填  | 说明                                                   |
-| ---------- | --- | ---------------------------------------------------- |
-| `content`  | 是   | 要渲染的完整内容，无需额外包含 `<render>` 标签                        |
-| `template` | 否   | 通常留空以沿用当前模板；仅在用户明确指定或已经选定模板时填写                       |
-| `layout`   | 否   | `auto` 或 `single`；留空使用当前用户偏好。旧值 `paged` 仍按 `auto` 兼容 |
+| 参数           | 必填  | 说明                                                   |
+| ------------ | --- | ---------------------------------------------------- |
+| `content`    | 是   | 要渲染的完整内容，无需额外包含 `<render>` 标签                        |
+| `template`   | 否   | 通常留空以沿用当前模板；仅在用户明确指定或已经选定模板时填写                       |
+| `layout`     | 否   | `auto` 或 `single`；留空使用当前用户偏好。旧值 `paged` 仍按 `auto` 兼容 |
+| `font_scale` | 否   | 本次渲染的字号倍率，默认 `1.0`，有效范围 `0.75–1.5`                  |
 
 Agent 选择工具时遵循以下边界：
 
 - 用户明确要求排版图片，或需要把公式推导、讲解、报告等内容以图片交付时，调用 `latex_render_to_image`。
 - 文生图、图片编辑和网页截图不属于本工具；应交给相应的图片或浏览器工具。
 - 用户未指定样式时让 `template` 留空；只有用户明确指定或已经选定模板时才填写。
+- `font_scale` 只影响本次渲染；四个内置模板支持，Custom 模板不做强制 CSS 覆盖。
 - Inline code 不高亮；只有显式标注语言的 Markdown 围栏代码块使用本地 Highlight.js。
 
 ### 用户命令
@@ -334,7 +338,7 @@ Agent 选择工具时遵循以下边界：
 
 Markdown 产生的 HTML 默认经过允许列表清洗：脚本、样式、事件属性、iframe、object、embed 等内容会被移除；`novel` 语义标签与插件生成的数学标签会保留。
 
-MathJax 使用仓库内的 `assets/mathjax-tex-svg.js`，正常渲染无需连接 CDN。
+MathJax 使用仓库内的 `assets/mathjax-tex-svg.js`，正常渲染无需连接 CDN。截图前会检查每个公式是否完成 SVG 排版、是否存在语法错误、零尺寸或横向裁切；检查失败时不发送图片，而是返回具体公式序号和错误类别。
 
 ## 问题排查
 
@@ -357,6 +361,7 @@ AstrBot 更新后通常无需删除浏览器目录。该目录位于 `data/plugi
 - 使用受支持的分隔符：`$...$`、`$$...$$`、`\(...\)` 或 `\[...\]`。
 - 查看日志是否成功加载本地 `assets/mathjax-tex-svg.js`。
 - 公式不应放入代码块；代码块中的 `$...$` 会按普通代码保留。
+- 若提示“公式内容错误”，按返回的公式序号检查缺失参数或 MathJax 不支持的命令；插件不会把错误占位符截图发送。
 
 ### 图片底部被截断或渲染失败
 
@@ -394,8 +399,12 @@ astrbot_plugin_latex_render/
 │   ├── document.py         浏览器文档组装
 │   ├── assets.py           MathJax、Highlight.js 与背景资源
 │   ├── browser_runtime.py  Playwright 依赖检测与生命周期
-│   ├── renderer.py         Playwright、分页、A4 画布、体积预算与 GIF 原型
-│   ├── models.py           结构化渲染结果与错误类型
+│   ├── page_prepare.py     页面加载、资源策略、公式门禁与布局稳定
+│   ├── capture.py          静态截图、语义分页与 GIF 时间轴采集/合成
+│   ├── postprocess.py      A4 画布、续页标记、页码与体积预算
+│   ├── renderer.py         浏览器池与“前处理→采集→后处理”总编排
+│   ├── math_quality.py     MathJax SVG 完整性与可见区域质量门禁
+│   ├── models.py           渲染参数、结构化结果与错误类型
 │   ├── security.py         HTML 允许列表清洗
 │   └── text.py             Markdown、LaTeX 保护与换行处理
 ├── template_system/

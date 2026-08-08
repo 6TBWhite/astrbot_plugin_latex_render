@@ -94,12 +94,48 @@ def test_agent_tool_sends_rendered_image(
     )
 
     plugin.pipeline.render_for_layout.assert_awaited_once_with(
-        "## 勾股定理\n\n$a^2+b^2=c^2$", "classic", "user-1", False, "auto"
+        "## 勾股定理\n\n$a^2+b^2=c^2$",
+        "classic",
+        "user-1",
+        False,
+        "auto",
+        font_scale=1.0,
     )
     assert len(event.sent) == 1
     assert event.sent[0].kind == "chain"
     assert event.sent[0].payload == [rendered_image]
-    assert results == ["图片已渲染并发送给用户。可对图片内容进行简要解说。"]
+    assert results == [
+        "图片已渲染并发送给用户（font_scale=1）。可对图片内容进行简要解说。"
+    ]
+
+
+def test_agent_tool_clamps_and_reports_font_scale(
+    plugin, fake_event_type, collect_results
+) -> None:
+    rendered_image = object()
+    plugin.pipeline.render_for_layout = AsyncMock(return_value=rendered_image)
+    event = fake_event_type()
+
+    results = asyncio.run(
+        collect_results(
+            plugin.latex_render_to_image_tool(
+                event,
+                content="字号测试",
+                template="classic",
+                font_scale=9,
+            )
+        )
+    )
+
+    plugin.pipeline.render_for_layout.assert_awaited_once_with(
+        "字号测试",
+        "classic",
+        "user-1",
+        False,
+        "auto",
+        font_scale=1.5,
+    )
+    assert "font_scale=1.5" in results[0]
 
 
 def test_agent_tool_rejects_empty_content_without_sending(

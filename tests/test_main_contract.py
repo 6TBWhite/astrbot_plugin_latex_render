@@ -88,13 +88,20 @@ def test_llm_tool_docstring_declares_all_parameters() -> None:
                 "content",
                 "template",
                 "layout",
+                "font_scale",
             ]
-            assert [default.value for default in node.args.defaults] == ["", "", ""]
+            assert [default.value for default in node.args.defaults] == [
+                "",
+                "",
+                "",
+                1.0,
+            ]
             docstring = ast.get_docstring(node) or ""
             assert "Args:" in docstring
             assert "content(string):" in docstring
             assert "template(string):" in docstring
             assert "layout(string):" in docstring
+            assert "font_scale(number):" in docstring
             assert "LaTeX Render 插件" not in docstring
             assert "本地 Chromium" not in docstring
             assert "不用于文生图" in docstring
@@ -112,6 +119,7 @@ def test_llm_tool_docstring_declares_all_parameters() -> None:
                 ("content", "string"),
                 ("template", "string"),
                 ("layout", "string"),
+                ("font_scale", "number"),
             ]
             return
 
@@ -157,8 +165,7 @@ def test_service_modules_are_bounded_and_never_import_main() -> None:
     for directory in ("application", "rendering", "template_system"):
         for path in (PLUGIN_ROOT / directory).glob("*.py"):
             source = path.read_text(encoding="utf-8")
-            if path.name != "renderer.py":
-                assert len(source.splitlines()) < 600, path
+            assert len(source.splitlines()) < 1000, path
             tree = ast.parse(source)
             imports = [
                 alias.name

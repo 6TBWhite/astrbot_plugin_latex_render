@@ -8,7 +8,7 @@ from astrbot.api import logger
 from astrbot.api.message_components import Plain
 from astrbot.core.agent.message import TextPart
 
-from ..config import RenderConfig, normalize_layout
+from ..config import RenderConfig, normalize_font_scale, normalize_layout
 from ..preferences import PreferenceStore
 from ..rendering.models import RenderFailure, RenderResult
 from ..rendering.pipeline import RenderPipeline
@@ -299,6 +299,7 @@ class RenderActions:
         content: str = "",
         template: str = "",
         layout: str = "",
+        font_scale: float = 1.0,
     ):
         if not content or not content.strip():
             yield "⚠️ 内容不能为空，请提供需要渲染的 Markdown 文本。"
@@ -315,12 +316,18 @@ class RenderActions:
             yield "⚠️ layout 仅支持 auto 或 single。"
             return
         try:
+            effective_font_scale = normalize_font_scale(font_scale)
+        except ValueError as exc:
+            yield f"⚠️ {exc}。"
+            return
+        try:
             rendered = await self.pipeline.render_for_layout(
                 content,
                 selected,
                 self.user_id(event),
                 False,
                 effective_layout,
+                font_scale=effective_font_scale,
             )
         except Exception as exc:
             logger.error(f"[HTML渲染] latex_render_to_image 工具渲染失败: {exc}")
@@ -338,7 +345,9 @@ class RenderActions:
             yield self._send_failure_message(exc, len(images))
             return
         self.hidden_context.record(event, content)
-        yield self._send_success_message(len(images), warnings)
+        yield self._send_success_message(
+            len(images), warnings, effective_font_scale
+        )
 
     @staticmethod
     async def _send_images(event, images: list) -> None:
@@ -367,12 +376,19 @@ class RenderActions:
         return "图片已生成，但发送失败，请检查消息平台连接后重试。"
 
     @staticmethod
-    def _send_success_message(image_count: int, warnings: list[str]) -> str:
+    def _send_success_message(
+        image_count: int, warnings: list[str], font_scale: float
+    ) -> str:
+        scale_text = f"font_scale={font_scale:g}"
         if image_count == 1 and not warnings:
-            return "图片已渲染并发送给用户。可对图片内容进行简要解说。"
+            return (
+                f"图片已渲染并发送给用户（{scale_text}）。"
+                "可对图片内容进行简要解说。"
+            )
         warning_text = f"；提示：{'；'.join(warnings)}" if warnings else ""
         return (
-            f"内容已渲染为 {image_count} 页并发送给用户{warning_text}。"
+            f"内容已渲染为 {image_count} 页并发送给用户"
+            f"（{scale_text}）{warning_text}。"
             "可对图片内容进行简要解说。"
         )
 

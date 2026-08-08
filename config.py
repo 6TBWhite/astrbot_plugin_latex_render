@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import MutableMapping
 from typing import Any
 
@@ -273,6 +274,18 @@ WEB_CONFIG_SPECS = {
 def normalize_layout(value: object) -> str:
     layout = str(value or "").strip().lower()
     return "auto" if layout == "paged" else layout
+
+
+def normalize_font_scale(value: object) -> float:
+    """Return one bounded, finite per-render font multiplier."""
+
+    try:
+        scale = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("font_scale 必须是数字") from exc
+    if not math.isfinite(scale):
+        raise ValueError("font_scale 必须是有限数字")
+    return round(max(0.75, min(scale, 1.5)), 3)
 
 
 class RenderConfig:

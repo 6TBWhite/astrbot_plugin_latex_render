@@ -231,9 +231,9 @@ class HtmlAssets:
             encoded = base64.b64encode(self.mathjax_source.encode("utf-8")).decode(
                 "ascii"
             )
-            loader = f"""<script data-astrbot-mathjax-loader>(function(){{var code=atob({encoded!r});var s=document.createElement('script');s.id='astrbot-mathjax-script';s.type='text/javascript';s.textContent=code;if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',function(){{document.head.appendChild(s);}});}}else{{document.head.appendChild(s);}}}})();</script>"""
+            loader = f"""<script data-astrbot-mathjax-loader>(function(){{var code=atob({encoded!r});var s=document.createElement('script');s.id='astrbot-mathjax-script';s.type='text/javascript';s.textContent=code;s.onerror=function(){{window.__ASTR_SET_MATH_STATUS__('failed','MathJax script load failed');}};if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',function(){{document.head.appendChild(s);}});}}else{{document.head.appendChild(s);}}}})();</script>"""
         else:
-            loader = '<script id="astrbot-mathjax-script" data-astrbot-mathjax-loader defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" onerror="window.__ASTR_MATH_READY__ = true;"></script>'
+            loader = '<script id="astrbot-mathjax-script" data-astrbot-mathjax-loader defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" onerror="window.__ASTR_SET_MATH_STATUS__(\'failed\',\'MathJax script load failed\');"></script>'
         assets = (
             """
 <style>
@@ -242,8 +242,9 @@ mjx-container,mjx-container *{word-break:normal!important;overflow-wrap:normal!i
 .astr-math-block mjx-container[jax="SVG"]{display:inline-block!important;margin:0 auto!important;}
 </style>
 <script>
-window.__ASTR_MATH_READY__=false;
-window.MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],['\\\\[','\\\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams','noerrors','noundefined']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']},startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{window.__ASTR_MATH_READY__=true;})}};
+window.__ASTR_MATH_STATUS__={state:'pending',error:''};
+window.__ASTR_SET_MATH_STATUS__=(state,error='')=>{window.__ASTR_MATH_STATUS__={state,error:String(error||'')}};
+window.MathJax={tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],['\\\\[','\\\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams'],'[-]':['noundefined']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']},startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{window.__ASTR_SET_MATH_STATUS__('ready');}).catch(error=>{window.__ASTR_SET_MATH_STATUS__('failed',error&&error.message?error.message:error);})}};
 </script>
 """
             + loader

@@ -66,6 +66,9 @@ def test_mathjax_delimiters_survive_js_escaping(plugin) -> None:
     )
     assert r"inlineMath:[['$','$'],['\\('" in html
     assert r"displayMath:[['$$','$$'],['\\['" in html
+    assert "__ASTR_MATH_STATUS__={state:'pending',error:''}" in html
+    assert "'[-]':['noundefined']" in html
+    assert "noerrors" not in html
 
 
 def test_regular_template_keeps_configured_render_width(

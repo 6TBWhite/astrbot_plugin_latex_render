@@ -170,6 +170,7 @@ class LatexRenderPlugin(Star):
         content: str = "",
         template: str = "",
         layout: str = "",
+        font_scale: float = 1.0,
     ):
         """将完整 Markdown、LaTeX、表格和显式语言代码渲染为一张或多张图片，并直接发送给当前用户。
 
@@ -179,9 +180,10 @@ class LatexRenderPlugin(Star):
             content(string): 要渲染的完整 Markdown + LaTeX 正文。
             template(string): 可选。通常留空以沿用当前模板；仅在用户明确指定或已经选定模板时填写。
             layout(string): 可选。留空沿用当前会话设置；auto（自动分页）或 single（单张长图）。
+            font_scale(number): 可选。相对当前模板基础字号的倍率，默认 1.0，范围 0.75–1.5。
         """
         async for result in self.actions.render_to_image(
-            event, content, template, layout
+            event, content, template, layout, font_scale
         ):
             yield result
 
